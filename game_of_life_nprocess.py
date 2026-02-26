@@ -86,12 +86,12 @@ class Grille:
                 if self.cells[i,j] == 1: # Si la cellule est vivante
                     if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
                         next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
-                        diff_cells.append((i-1)*nx+j)
+                        diff_cells.append(i*nx+j)
                     else:
                         next_cells[i,j] = 1 # Sinon elle reste vivante
                 elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
                     next_cells[i,j] = 1         # Naissance de la cellule
-                    diff_cells.append((i-1)*nx+j)
+                    diff_cells.append(i*nx+j)
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
@@ -158,6 +158,9 @@ if __name__ == '__main__':
     rank    = globCom.rank
     name    = MPI.Get_processor_name()
 
+    if nbp < 2: 
+        raise ValueError("Need at least 2 processes to parallelize the Game of Life")
+
     pg.init()
     dico_patterns = { # Dimension et pattern dans un tuple
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
@@ -202,12 +205,9 @@ if __name__ == '__main__':
 
         # Creating the global grid
         
-        grid = Grille(0, 1, *init_pattern)
+        grid = Grille(rank_screen, nbp_screen, *init_pattern)
         appli = App((resx, resy), grid)
-
-        # Empty the global grid
-
-        grid.cells = np.zeros(grid.dimensions, dtype=np.uint8)
+        first_iter=True
 
     else: 
 
@@ -227,9 +227,9 @@ if __name__ == '__main__':
 
         # Checking the first iteration
 
-    first_iter=True
 
     mustContinue = True
+
     while mustContinue:
         #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
 
@@ -239,7 +239,6 @@ if __name__ == '__main__':
                 first_iter=False
 
             else:
-                
                 recv_counter=0
                 while recv_counter<nbp-1:
                     [y_loc,diff]=globCom.recv(source=MPI.ANY_SOURCE)
@@ -259,28 +258,30 @@ if __name__ == '__main__':
 
             # Getting value for ghost lines 
 
-            if first_iter:
-                first_iter=False
-            else:
-                if rank_calc%2==0:
-                    com_calc.Send(grid_loc.cells[1,:], dest=before_process)
-                    com_calc.Send(grid_loc.cells[-2,:], dest=next_process)
-                    com_calc.Recv(grid_loc.cells[0,:], source=next_process)
-                    com_calc.Recv(grid_loc.cells[-1,:], source=before_process)
-                else:
-                    com_calc.Recv(grid_loc.cells[0,:], source=next_process)
-                    com_calc.Recv(grid_loc.cells[-1,:], source=before_process)
-                    com_calc.Send(grid_loc.cells[1,:], dest=before_process)
-                    com_calc.Send(grid_loc.cells[-2,:], dest=next_process)
+            # WARNING: the order of the Send and Recv is crucial in ordre to avoid program blocking
+            t1 = time.time()
 
-                # Computing the local grid next iteration 
-            
-                diff = grid_loc.compute_next_iteration() 
-            
-                # Sending the results 
+            if nbp_calc>1 and rank_calc%2==0:
+                com_calc.Send(grid_loc.cells[1,:], dest=before_process)
+                com_calc.Recv(grid_loc.cells[-1,:], source=next_process)
+                com_calc.Send(grid_loc.cells[-2,:], dest=next_process)
+                com_calc.Recv(grid_loc.cells[0,:], source=before_process)
+            elif nbp_calc>1:
+                com_calc.Recv(grid_loc.cells[-1,:], source=next_process)
+                com_calc.Send(grid_loc.cells[1,:], dest=before_process)
+                com_calc.Recv(grid_loc.cells[0,:], source=before_process)
+                com_calc.Send(grid_loc.cells[-2,:], dest=next_process)
 
-                globCom.send([grid_loc.y_loc]+[diff], dest=0)
-    
+            # Computing the local grid next iteration 
+        
+            diff = grid_loc.compute_next_iteration() 
+        
+            # Sending the results 
+
+            globCom.send([grid_loc.y_loc]+[diff], dest=0)
+            t2 = time.time()
+            print(f"Temps calcul prochaine generation pour le rank {rank} : {t2-t1:2.2e} secondes",end="\r")
+
     if rank==0:
         pg.quit()
 
