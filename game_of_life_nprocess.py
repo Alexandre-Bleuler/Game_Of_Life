@@ -47,14 +47,22 @@ class Grille:
 
         self.ny_loc = ny_loc
         self.y_loc = y_loc
-        self.dimensions = (ny_loc+2,dim[1])
+        if nbp >1:
+            self.dimensions = (ny_loc+2,dim[1])
+        else: 
+            self.dimensions = dim
 
         if init_pattern is not None:
             self.cells = np.zeros(self.dimensions, dtype=np.uint8)
-            indices_i = np.array([(v[0]-y_loc+1)%dim[0] for v in init_pattern])
-            indices_j = np.array([v[1] for v in init_pattern])
-            mask = (indices_i< self.dimensions[0])
-            self.cells[indices_i[mask],indices_j[mask]] = 1
+            if nbp>1:
+                indices_i = np.array([(v[0]-y_loc+1)%dim[0] for v in init_pattern])
+                indices_j = np.array([v[1] for v in init_pattern])
+                mask = (indices_i< self.dimensions[0])
+                self.cells[indices_i[mask],indices_j[mask]] = 1
+            else:
+                indices_i = [v[0] for v in init_pattern]
+                indices_j = [v[1] for v in init_pattern]
+                self.cells[indices_i,indices_j] = 1
         else:
             self.cells = np.random.randint(2, size=self.dimensions, dtype=np.uint8)
             self.col_life = color_life
@@ -73,7 +81,7 @@ class Grille:
         nx = self.dimensions[1]
         next_cells = np.empty(self.dimensions, dtype=np.uint8)
         diff_cells = []
-        for i in range(1,ny-1): # not updating ghost lines, it will be done by another process
+        for i in range(ny): # not updating ghost lines, it will be done by another process
             i_above = (i+ny-1)%ny # +ny pour le cas particulier i==0
             i_below = (i+ny+1)%ny
             for j in range(nx):
@@ -141,11 +149,14 @@ class App:
         pg.display.update()
 
 
-def update_grid(grid, y_loc, diff):
+def update_grid(grid, nbp_calc, ny_loc, y_loc, diff):
     for number in diff: 
         i=number//grid.dimensions[1]
         j=number%grid.dimensions[1]
-        grid.cells[y_loc+i,j] =1-grid.cells[y_loc+i,j]
+        if nbp_calc >1 and i>0 and i<ny_loc+1:
+            grid.cells[(y_loc+i-1)%grid.dimensions[0],j] =1-grid.cells[(y_loc+i-1)%grid.dimensions[0],j]
+        elif nbp_calc==1:
+            grid.cells[i,j] =1-grid.cells[i,j]
 
 if __name__ == '__main__':
     import time
@@ -241,9 +252,9 @@ if __name__ == '__main__':
             else:
                 recv_counter=0
                 while recv_counter<nbp-1:
-                    [y_loc,diff]=globCom.recv(source=MPI.ANY_SOURCE)
+                    [ny_loc, y_loc,diff]=globCom.recv(source=MPI.ANY_SOURCE)
                     recv_counter+=1
-                    update_grid(grid, y_loc, diff)
+                    update_grid(grid, nbp-1, ny_loc, y_loc, diff)
 
             t2 = time.time()
             appli.draw()
@@ -278,7 +289,7 @@ if __name__ == '__main__':
         
             # Sending the results 
 
-            globCom.send([grid_loc.y_loc]+[diff], dest=0)
+            globCom.send([grid_loc.ny_loc, grid_loc.y_loc]+[diff], dest=0)
             t2 = time.time()
             print(f"Temps calcul prochaine generation pour le rank {rank} : {t2-t1:2.2e} secondes",end="\r")
 
