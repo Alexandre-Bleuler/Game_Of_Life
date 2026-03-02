@@ -145,6 +145,9 @@ if __name__ == '__main__':
     nbp     = globCom.size
     rank    = globCom.rank
     name    = MPI.Get_processor_name()
+    
+    if nbp != 2: 
+        raise ValueError("This program runs with 2 processes only!")
 
     pg.init()
     dico_patterns = { # Dimension et pattern dans un tuple
