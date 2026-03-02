@@ -325,12 +325,12 @@ if __name__ == '__main__':
     else:
         appli = None
 
-    # ----- Boucle principale -----
+        # ----- Boucle principale -----
     first_iter = True
     mustContinue = True
     iter_count = 0
     
-    # Pour les mesures de performance (Cours 2)
+    # Pour les mesures de performance
     temps_calcul = 0.0
     temps_comm = 0.0
     debut_global = time.time()
@@ -338,88 +338,108 @@ if __name__ == '__main__':
     while mustContinue:
         if rank == 0:
             # ----- PROCESSUS 0 : AFFICHAGE -----
+            # (rien ne change ici, gardez votre code existant)
             
             if not first_iter:
-                # Réception des mises à jour de tous les processus de calcul
+                # Réception des mises à jour
                 recu = 0
                 while recu < nbp - 1:
-                    # On reçoit de n'importe quelle source
                     data = globCom.recv(source=MPI.ANY_SOURCE)
                     proc_rank, y_loc, x_loc, diff, nx_loc = data
                     update_grid_2d(grid_global, y_loc, x_loc, diff, nx_loc)
                     recu += 1
 
-            # Affichage de la grille
             appli.draw()
             
-            # Gestion des événements (fermeture de la fenêtre)
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     mustContinue = False
-                    # On prévient tout le monde qu'il faut s'arrêter
                     for i in range(1, nbp):
                         globCom.send(False, dest=i)
             
             if first_iter:
                 first_iter = False
-                
-            # Petite pause pour avoir une animation visible
             time.sleep(0.05)
 
         else:
             # ----- PROCESSUS DE CALCUL (rank != 0) -----
+            # C'EST ICI QUE VOUS DEVEZ METTRE LE NOUVEAU CODE
+            # Remplacez TOUT le bloc else existant par ceci :
             
             if not first_iter:
                 debut_comm = time.time()
                 
-                # === ÉTAPE 1: Communications non-bloquantes ===
-                # Comme expliqué dans le Cours 1, on utilise Irecv/Isend
-                # pour pouvoir chevaucher calcul et communication
+                # === Nettoyage des anciennes requêtes ===
                 req_list = []
                 
-                # Échange des lignes fantômes (vertical)
-                # Réception de la ligne du haut (dans ghost cell du bas)
-                req = row_comm.Irecv(grid_loc.cells[-1, 1:-1], source=down, tag=11)
+                # ---- 1. Échange des lignes fantômes (vertical) ----
+                # Buffers pour les réceptions
+                buffer_haut = np.empty(grid_loc.nx_loc, dtype=np.uint8)   # Pour la ligne du haut
+                buffer_bas = np.empty(grid_loc.nx_loc, dtype=np.uint8)    # Pour la ligne du bas
+                
+                # Lancer les réceptions non-bloquantes
+                req = row_comm.Irecv(buffer_bas, source=down, tag=11)      # Réception du bas
                 req_list.append(req)
-                # Réception de la ligne du bas (dans ghost cell du haut)
-                req = row_comm.Irecv(grid_loc.cells[0, 1:-1], source=up, tag=12)
+                req = row_comm.Irecv(buffer_haut, source=up, tag=12)       # Réception du haut
                 req_list.append(req)
                 
-                # Envoi de ma ligne du haut vers le haut
-                req = row_comm.Isend(grid_loc.cells[1, 1:-1], dest=up, tag=12)
+                # Préparer les envois (versions contiguës)
+                ligne_haut = np.ascontiguousarray(grid_loc.cells[1, 1:-1])  # Ma ligne du haut
+                ligne_bas = np.ascontiguousarray(grid_loc.cells[-2, 1:-1]) # Ma ligne du bas
+                
+                # Lancer les envois non-bloquants
+                req = row_comm.Isend(ligne_haut, dest=up, tag=12)           # Envoi vers le haut
                 req_list.append(req)
-                # Envoi de ma ligne du bas vers le bas
-                req = row_comm.Isend(grid_loc.cells[-2, 1:-1], dest=down, tag=11)
+                req = row_comm.Isend(ligne_bas, dest=down, tag=11)          # Envoi vers le bas
                 req_list.append(req)
                 
                 # Attendre la fin des communications verticales
                 MPI.Request.Waitall(req_list)
+                
+                # Copier les données reçues dans les ghost cells
+                grid_loc.cells[-1, 1:-1] = buffer_bas      # La ligne du bas reçue va en haut
+                grid_loc.cells[0, 1:-1] = buffer_haut      # La ligne du haut reçue va en bas
+                
+                # ---- 2. Échange des colonnes fantômes (horizontal) ----
                 req_list = []
                 
-                # Échange des colonnes fantômes (horizontal)
-                # Réception de la colonne de gauche (dans ghost cell de droite)
-                req = col_comm.Irecv(grid_loc.cells[1:-1, -1], source=right, tag=21)
+                # Buffers pour les colonnes
+                buffer_gauche = np.empty(grid_loc.ny_loc, dtype=np.uint8)
+                buffer_droite = np.empty(grid_loc.ny_loc, dtype=np.uint8)
+                
+                # Réceptions non-bloquantes
+                req = col_comm.Irecv(buffer_droite, source=right, tag=21)  # Réception de droite
                 req_list.append(req)
-                # Réception de la colonne de droite (dans ghost cell de gauche)
-                req = col_comm.Irecv(grid_loc.cells[1:-1, 0], source=left, tag=22)
+                req = col_comm.Irecv(buffer_gauche, source=left, tag=22)   # Réception de gauche
                 req_list.append(req)
                 
-                # Envoi de ma colonne de gauche vers la gauche
-                req = col_comm.Isend(grid_loc.cells[1:-1, 1], dest=left, tag=22)
+                # Préparer les envois
+                col_gauche = np.ascontiguousarray(grid_loc.cells[1:-1, 1])   # Ma colonne de gauche
+                col_droite = np.ascontiguousarray(grid_loc.cells[1:-1, -2])  # Ma colonne de droite
+                
+                # Envois non-bloquants
+                req = col_comm.Isend(col_gauche, dest=left, tag=22)      # Envoi vers la gauche
                 req_list.append(req)
-                # Envoi de ma colonne de droite vers la droite
-                req = col_comm.Isend(grid_loc.cells[1:-1, -2], dest=right, tag=21)
+                req = col_comm.Isend(col_droite, dest=right, tag=21)     # Envoi vers la droite
                 req_list.append(req)
                 
+                # Attendre la fin
                 MPI.Request.Waitall(req_list)
-                req_list = []
                 
-                # Échange des coins (diagonales) - plus simple en bloquant
-                # Envoyer mes 4 coins internes
-                globCom.send(grid_loc.cells[1, 1], dest=up_left_rank, tag=31)
-                globCom.send(grid_loc.cells[1, -2], dest=up_right_rank, tag=32)
-                globCom.send(grid_loc.cells[-2, 1], dest=down_left_rank, tag=33)
-                globCom.send(grid_loc.cells[-2, -2], dest=down_right_rank, tag=34)
+                # Copier dans les ghost cells
+                grid_loc.cells[1:-1, -1] = buffer_droite   # Ce qui vient de droite va à gauche? Non, à droite!
+                grid_loc.cells[1:-1, 0] = buffer_gauche    # Ce qui vient de gauche va à droite? Non, à gauche!
+                # Correction: 
+                # buffer_droite vient du voisin de droite, donc il va dans la ghost cell de droite (index -1)
+                # buffer_gauche vient du voisin de gauche, donc il va dans la ghost cell de gauche (index 0)
+                # C'est bon, c'est correct!
+                
+                # ---- 3. Échange des coins (diagonales) ----
+                # Envoyer mes 4 coins (en scalaires avec .item())
+                globCom.send(grid_loc.cells[1, 1].item(), dest=up_left_rank, tag=31)
+                globCom.send(grid_loc.cells[1, -2].item(), dest=up_right_rank, tag=32)
+                globCom.send(grid_loc.cells[-2, 1].item(), dest=down_left_rank, tag=33)
+                globCom.send(grid_loc.cells[-2, -2].item(), dest=down_right_rank, tag=34)
                 
                 # Recevoir les 4 coins fantômes
                 grid_loc.cells[0, 0] = globCom.recv(source=down_right_rank, tag=31)
@@ -429,23 +449,24 @@ if __name__ == '__main__':
                 
                 temps_comm += time.time() - debut_comm
                 
-                # === ÉTAPE 2: Calcul de la prochaine génération ===
+                # === Calcul de la prochaine génération ===
                 debut_calcul = time.time()
                 diff = grid_loc.compute_next_iteration()
                 temps_calcul += time.time() - debut_calcul
                 
-                # === ÉTAPE 3: Envoi des résultats au processus 0 ===
+                # === Envoi des résultats au processus 0 ===
                 globCom.send([rank, grid_loc.y_loc, grid_loc.x_loc, diff, grid_loc.nx_loc], 
                            dest=0)
 
                 iter_count += 1
                 
                 # Affichage des perfs toutes les 100 itérations
-                if iter_count % 100 == 0 and rank == 1:  # Seulement le processus 1 pour éviter la pollution
+                if iter_count % 100 == 0 and rank == 1:
                     print(f"\n[Perf] Itération {iter_count}:")
-                    print(f"       Temps calcul: {temps_calcul/iter_count*1000:.2f} ms/it")
-                    print(f"       Temps comm: {temps_comm/iter_count*1000:.2f} ms/it")
-                    print(f"       Ratio comm/calcul: {temps_comm/temps_calcul:.2f}")
+                    if iter_count > 0:
+                        print(f"       Temps calcul: {temps_calcul/iter_count*1000:.2f} ms/it")
+                        print(f"       Temps comm: {temps_comm/iter_count*1000:.2f} ms/it")
+                        print(f"       Ratio comm/calcul: {temps_comm/temps_calcul:.2f}")
 
             if first_iter:
                 first_iter = False
@@ -469,6 +490,7 @@ if __name__ == '__main__':
         temps_total = time.time() - debut_global
         print(f"\n[Rank {rank}] Temps total: {temps_total:.2f} s")
         print(f"[Rank {rank}] Itérations: {iter_count}")
-        print(f"[Rank {rank}] Temps moyen par itération: {temps_total/iter_count*1000:.2f} ms")
-        print(f"[Rank {rank}] Dont calcul: {temps_calcul/iter_count*1000:.2f} ms ({temps_calcul/temps_total*100:.1f}%)")
-        print(f"[Rank {rank}] Dont comm: {temps_comm/iter_count*1000:.2f} ms ({temps_comm/temps_total*100:.1f}%)")
+        if iter_count > 0:
+            print(f"[Rank {rank}] Temps moyen par itération: {temps_total/iter_count*1000:.2f} ms")
+            print(f"[Rank {rank}] Dont calcul: {temps_calcul/iter_count*1000:.2f} ms ({temps_calcul/temps_total*100:.1f}%)")
+            print(f"[Rank {rank}] Dont comm: {temps_comm/iter_count*1000:.2f} ms ({temps_comm/temps_total*100:.1f}%)")
