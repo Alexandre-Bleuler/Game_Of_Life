@@ -1,5 +1,5 @@
 """
-Le jeu de la vie
+Le jeu de la vie Le jeu de la vie parallélisé selon les colonnes de la grille. 
 ################
 Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
 de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
@@ -79,10 +79,10 @@ class Grille_Column:
         nx = self.dimensions[1]
         next_cells = np.empty(self.dimensions, dtype=np.uint8)
         diff_cells = []
-        for i in range(ny): # not updating ghost lines, it will be done by another process
+        for i in range(ny): 
             i_above = (i+ny-1)%ny # +ny pour le cas particulier i==0
             i_below = (i+ny+1)%ny
-            for j in range(nx):
+            for j in range(1,nx-1): # not updating ghost columns, it will be done by another process
                 j_left = (j-1+nx)%nx
                 j_right= (j+1)%nx
                 voisins_i = [i_above,i_above,i_above, i     , i      , i_below, i_below, i_below]
@@ -92,12 +92,12 @@ class Grille_Column:
                 if self.cells[i,j] == 1: # Si la cellule est vivante
                     if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
                         next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
-                        diff_cells.append(i*nx+j)
+                        diff_cells.append(i*(nx-2)+j-1)
                     else:
                         next_cells[i,j] = 1 # Sinon elle reste vivante
                 elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
                     next_cells[i,j] = 1         # Naissance de la cellule
-                    diff_cells.append(i*nx+j)
+                    diff_cells.append(i*(nx-2)+j-1)
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
@@ -107,10 +107,9 @@ class Grille_Column:
 def update_grid_column(grid, diff, nbp_calc=1, nx_loc=None, x_loc=None):
     for number in diff: 
         if nbp_calc>1:
-            i=number//(nx_loc+2)
-            j=number%(nx_loc+2)
-            if j>0 and j<nx_loc+1:
-                grid.cells[i,x_loc+j-1]=1-grid.cells[i,x_loc+j-1]
+            i=number//nx_loc
+            j=number%nx_loc
+            grid.cells[i,x_loc+j]=1-grid.cells[i,x_loc+j]
         else:
             i=number//grid.dimensions[1]
             j=number%grid.dimensions[1]
@@ -242,24 +241,22 @@ if __name__ == '__main__':
                 # Making copies in order to avoid "BufferError: dlpack: buffer is not contiguous"
                 first_no_phantom = np.copy(grid_loc.cells[:,1])
                 last_no_phantom = np.copy(grid_loc.cells[:,-2])
-                phantom_before = np.empty(grid_loc.dimensions[0])
-                phantom_next = np.empty(grid_loc.dimensions[0])
+                phantom_before = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
+                phantom_next = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
 
                 if rank_calc%2==0:
                     com_calc.Send(first_no_phantom, dest=before_process)
                     com_calc.Recv(phantom_next, source=next_process)
                     com_calc.Send(last_no_phantom, dest=next_process)
                     com_calc.Recv(phantom_before, source=before_process)
-                    grid_loc.cells[:,0] = phantom_before
-                    grid_loc.cells[:,-1] = phantom_next
                 else:
                     com_calc.Recv(phantom_next, source=next_process)
                     com_calc.Send(first_no_phantom, dest=before_process)
                     com_calc.Recv(phantom_before, source=before_process)
                     com_calc.Send(last_no_phantom, dest=next_process)
-                    grid_loc.cells[:,0] = phantom_before
-                    grid_loc.cells[:,-1] = phantom_next
 
+                grid_loc.cells[:,0] = phantom_before
+                grid_loc.cells[:,-1] = phantom_next
 
             # Computing the local grid next iteration 
         

@@ -1,5 +1,5 @@
 """
-Le jeu de la vie
+Le jeu de la vie parallélisé selon les lignes de la grille. 
 ################
 Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
 de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
@@ -79,7 +79,7 @@ class Grille_Line:
         nx = self.dimensions[1]
         next_cells = np.empty(self.dimensions, dtype=np.uint8)
         diff_cells = []
-        for i in range(ny): # not updating ghost lines, it will be done by another process
+        for i in range(1, ny-1): # not updating ghost lines, it will be done by another process
             i_above = (i+ny-1)%ny # +ny pour le cas particulier i==0
             i_below = (i+ny+1)%ny
             for j in range(nx):
@@ -92,24 +92,24 @@ class Grille_Line:
                 if self.cells[i,j] == 1: # Si la cellule est vivante
                     if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
                         next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
-                        diff_cells.append(i*nx+j)
+                        diff_cells.append((i-1)*nx+j)
                     else:
                         next_cells[i,j] = 1 # Sinon elle reste vivante
                 elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
                     next_cells[i,j] = 1         # Naissance de la cellule
-                    diff_cells.append(i*nx+j)
+                    diff_cells.append((i-1)*nx+j) 
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
         return diff_cells
 
 
-def update_grid_line(grid, diff, nbp_calc=1, ny_loc=None, y_loc=None):
+def update_grid_line(grid, diff, nbp_calc=1, y_loc=None):
     for number in diff: 
         i=number//grid.dimensions[1]
         j=number%grid.dimensions[1]
-        if nbp_calc >1 and i>0 and i<ny_loc+1:
-            grid.cells[y_loc+i-1,j] =1-grid.cells[y_loc+i-1,j]
+        if nbp_calc >1:
+            grid.cells[y_loc+i,j] =1-grid.cells[y_loc+i,j]
         elif nbp_calc==1:
             grid.cells[i,j] =1-grid.cells[i,j]
 
@@ -211,8 +211,8 @@ if __name__ == '__main__':
             recv_counter=0
             while recv_counter<nbp-1:
                 if nbp>2:
-                    [ny_loc, y_loc, diff]=globCom.recv(source=MPI.ANY_SOURCE)
-                    update_grid_line(grid, diff, nbp-1, ny_loc, y_loc)
+                    [y_loc, diff]=globCom.recv(source=MPI.ANY_SOURCE)
+                    update_grid_line(grid, diff, nbp-1, y_loc)
                 else:
                     diff=globCom.recv(source=1)
                     update_grid_line(grid, diff)
@@ -252,7 +252,7 @@ if __name__ == '__main__':
             # Sending the results 
 
             if nbp_calc>1:
-                globCom.send([grid_loc.ny_loc, grid_loc.y_loc]+[diff], dest=0)
+                globCom.send([grid_loc.y_loc]+[diff], dest=0)
             else:
                 globCom.send(diff, dest=0)
             t2 = time.time()
