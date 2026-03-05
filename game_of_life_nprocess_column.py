@@ -1,5 +1,5 @@
 """
-Le jeu de la vie
+Le jeu de la vie Le jeu de la vie parallélisé selon les colonnes de la grille. 
 ################
 Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
 de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
@@ -23,12 +23,16 @@ On itère ensuite pour étudier la façon dont évolue la population des cellule
 """
 import pygame  as pg
 import numpy   as np
+import game_of_life_2process as gr
 
-
-class Grille:
+class Grille_Column:
     """
     Grille torique décrivant l'automate cellulaire.
     En entrée lors de la création de la grille :
+        - rank le rang du processus dans le comminicateur utilisé
+        - nbp le nombre de processus dans le communicateur utilisé, il doit être au moins égal à 2
+        - ny_loc est le nombre de lignes non fantômes de la grille 
+        - y_loc est l'indice de la première ligne non fantômes de la grille
         - dimensions est un tuple contenant le nombre de cellules dans les deux directions (nombre lignes, nombre colonnes)
         - init_pattern est une liste de cellules initialement vivantes sur cette grille (les autres sont considérées comme mortes)
         - color_life est la couleur dans laquelle on affiche une cellule vivante
@@ -37,22 +41,36 @@ class Grille:
     Exemple :
        grid = Grille( (10,10), init_pattern=[(2,2),(0,2),(4,2),(2,0),(2,4)], color_life=pg.Color("red"), color_dead=pg.Color("black"))
     """
-    def __init__(self, dim, init_pattern=None, color_life=pg.Color("black"), color_dead=pg.Color("white")):
-        import random
-        self.dimensions = dim
+    def __init__(self, rank, nbp, dim, init_pattern=None, color_life=pg.Color("black"), color_dead=pg.Color("white")):
+
+        if nbp<2:
+            raise ValueError("Can't use a Grid_Line object with nbp<2!")
+
+        column_dim=dim[1]
+        reste = column_dim%nbp
+        nx_loc = column_dim//nbp + (1 if rank<reste else 0) 
+        x_loc = nx_loc*rank + (reste if rank>=reste else 0)
+
+        self.nx_loc = nx_loc
+        self.x_loc = x_loc
+        self.dimensions = (dim[0], nx_loc+2)
+
         if init_pattern is not None:
             self.cells = np.zeros(self.dimensions, dtype=np.uint8)
-            indices_i = [v[0] for v in init_pattern]
-            indices_j = [v[1] for v in init_pattern]
-            self.cells[indices_i,indices_j] = 1
+            indices_i = np.array([v[0] for v in init_pattern])
+            indices_j = np.array([(v[1]-x_loc+1)%dim[1] for v in init_pattern])
+            mask = (indices_j< self.dimensions[1])
+            self.cells[indices_i[mask],indices_j[mask]] = 1
         else:
-            self.cells = np.random.randint(2, size=dim, dtype=np.uint8)
+            self.cells = np.random.randint(2, size=self.dimensions, dtype=np.uint8)
+            self.col_life = color_life
+            self.col_dead = color_dead
         self.col_life = color_life
         self.col_dead = color_dead
 
     def compute_next_iteration(self):
         """
-        Calcule la prochaine génération de cellules en suivant les règles du jeu de la vie
+        Calcule la prochaine génération de cellules en suivant les règles du jeu de la vie (ne change pas les lignes fantômes)
         """
         # Remarque 1: on pourrait optimiser en faisant du vectoriel, mais pour plus de clarté, on utilise les boucles
         # Remarque 2: on voit la grille plus comme une matrice qu'une grille géométrique. L'indice (0,0) est donc en haut
@@ -61,10 +79,10 @@ class Grille:
         nx = self.dimensions[1]
         next_cells = np.empty(self.dimensions, dtype=np.uint8)
         diff_cells = []
-        for i in range(ny):
+        for i in range(ny): 
             i_above = (i+ny-1)%ny # +ny pour le cas particulier i==0
-            i_below = (i+1)%ny
-            for j in range(nx):
+            i_below = (i+ny+1)%ny
+            for j in range(1,nx-1): # not updating ghost columns, it will be done by another process
                 j_left = (j-1+nx)%nx
                 j_right= (j+1)%nx
                 voisins_i = [i_above,i_above,i_above, i     , i      , i_below, i_below, i_below]
@@ -74,66 +92,28 @@ class Grille:
                 if self.cells[i,j] == 1: # Si la cellule est vivante
                     if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
                         next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
-                        diff_cells.append(i*nx+j)
+                        diff_cells.append(i*(nx-2)+j-1)
                     else:
                         next_cells[i,j] = 1 # Sinon elle reste vivante
                 elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
                     next_cells[i,j] = 1         # Naissance de la cellule
-                    diff_cells.append(i*nx+j)
+                    diff_cells.append(i*(nx-2)+j-1)
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
         return diff_cells
 
 
-class App:
-    """
-    Cette classe décrit la fenêtre affichant la grille à l'écran
-        - geometry est un tuple de deux entiers donnant le nombre de pixels verticaux et horizontaux (dans cet ordre)
-        - grid est la grille décrivant l'automate cellulaire (voir plus haut)
-    """
-    def __init__(self, geometry, grid):
-        self.grid = grid
-        # Calcul de la taille d'une cellule par rapport à la taille de la fenêtre et de la grille à afficher :
-        self.size_x = geometry[1]//grid.dimensions[1]
-        self.size_y = geometry[0]//grid.dimensions[0]
-        if self.size_x > 4 and self.size_y > 4 :
-            self.draw_color=pg.Color('lightgrey')
-        else:
-            self.draw_color=None
-        # Ajustement de la taille de la fenêtre pour bien fitter la dimension de la grille
-        self.width = grid.dimensions[1] * self.size_x
-        self.height= grid.dimensions[0] * self.size_y
-        # Création de la fenêtre à l'aide de tkinter
-        self.screen = pg.display.set_mode((self.width,self.height))
-        #
-        self.canvas_cells = []
-
-    def compute_rectangle(self, i: int, j: int):
-        """
-        Calcul la géométrie du rectangle correspondant à la cellule (i,j)
-        """
-        return (self.size_x*j, self.height - self.size_y*(i + 1), self.size_x, self.size_y)
-
-    def compute_color(self, i: int, j: int):
-        if self.grid.cells[i,j] == 0:
-            return self.grid.col_dead
-        else:
-            return self.grid.col_life
-
-    def draw(self):
-        [self.screen.fill(self.compute_color(i,j),self.compute_rectangle(i,j)) for i in range(self.grid.dimensions[0]) for j in range(self.grid.dimensions[1])]
-        if (self.draw_color is not None):
-            [pg.draw.line(self.screen, self.draw_color, (0,i*self.size_y), (self.width,i*self.size_y)) for i in range(self.grid.dimensions[0])]
-            [pg.draw.line(self.screen, self.draw_color, (j*self.size_x,0), (j*self.size_x,self.height)) for j in range(self.grid.dimensions[1])]
-        pg.display.update()
-
-
-def update_grid(grid, diff):
+def update_grid_column(grid, diff, nbp_calc=1, nx_loc=None, x_loc=None):
     for number in diff: 
-        i=number//grid.dimensions[1]
-        j=number%grid.dimensions[1]
-        grid.cells[i,j] =1-grid.cells[i,j]
+        if nbp_calc>1:
+            i=number//nx_loc
+            j=number%nx_loc
+            grid.cells[i,x_loc+j]=1-grid.cells[i,x_loc+j]
+        else:
+            i=number//grid.dimensions[1]
+            j=number%grid.dimensions[1]
+            grid.cells[i,j]=1-grid.cells[i,j]
 
 if __name__ == '__main__':
     import time
@@ -145,6 +125,9 @@ if __name__ == '__main__':
     nbp     = globCom.size
     rank    = globCom.rank
     name    = MPI.Get_processor_name()
+
+    if nbp < 2: 
+        raise ValueError("Need at least 2 processes to parallelize the Game of Life!")
 
     pg.init()
     dico_patterns = { # Dimension et pattern dans un tuple
@@ -178,18 +161,65 @@ if __name__ == '__main__':
     except KeyError:
         print("No such pattern. Available ones are:", dico_patterns.keys())
         exit(1)
-    grid = Grille(*init_pattern)
-    appli = None
+
+
     if rank==0:
-        appli = App((resx, resy), grid)
+
+        # Spliting globCom
+
+        com_screen= globCom.Split(color=(rank!=0), key=rank)
+        nbp_screen=com_screen.size
+        rank_screen=com_screen.rank
+
+        # Creating the global grid
+        
+        grid = gr.Grille(*init_pattern)
+        appli = gr.App((resx, resy), grid)
+        first_iter=True
+
+    else: 
+
+        appli = None
+
+        # Spliting globCom
+
+        com_calc = globCom.Split(color=(rank!=0), key=rank)
+        nbp_calc=com_calc.size
+        rank_calc=com_calc.rank
+
+        # Spliting the grid
+        
+        if nbp_calc>1:
+            before_process=(rank_calc-1)%nbp_calc
+            next_process=(rank_calc+1)%nbp_calc
+            grid_loc = Grille_Column(rank_calc, nbp_calc, *init_pattern)
+        else:
+            grid_loc = gr.Grille(*init_pattern)
+
+        # Checking the first iteration
+
 
     mustContinue = True
+
     while mustContinue:
         #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
 
         if rank==0:
-            diff=globCom.recv(source=1)
-            update_grid(grid,diff)
+
+            if first_iter:
+                first_iter=False
+                continue
+
+            recv_counter=0
+            while recv_counter<nbp-1:
+                if nbp>2:
+                    [nx_loc, x_loc, diff]=globCom.recv(source=MPI.ANY_SOURCE)
+                    update_grid_column(grid, diff, nbp-1, nx_loc, x_loc)
+                else:
+                    diff=globCom.recv(source=1)
+                    update_grid_column(grid, diff)
+                recv_counter+=1
+
             t2 = time.time()
             appli.draw()
             t3 = time.time()
@@ -198,30 +228,48 @@ if __name__ == '__main__':
                     globCom.Abort()
             #print(f"Temps affichage : {t3-t2:2.2e} secondes", end='\r')
 
+
         else :
 
-            # Spliting globCom
+            # Getting value for ghost lines 
 
-            com_calc = globCom.Split(color=(rank!=0), key=rank)
-            com_calc.Set_name("Groupe de calcul")
-            nbp_calc=com_calc.size
-            rank_calc=com_calc.rank
+            # WARNING: the order of the Send and Recv is crucial in order to avoid program blocking
+            t1 = time.time()
 
-            # Spliting the grid
-            
-            row_dim=grid.dimension[0]
-            reste=row_dim%nbp
-            ny_loc=row_dim//nbp + 2 + (1 if rank_calc<reste else 0) 
-            y_loc= ny_loc*rank + (nbp if rank_calc>=reste else 0)
+
+            if nbp_calc>1:
+                # Making copies in order to avoid "BufferError: dlpack: buffer is not contiguous"
+                first_no_phantom = np.copy(grid_loc.cells[:,1])
+                last_no_phantom = np.copy(grid_loc.cells[:,-2])
+                phantom_before = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
+                phantom_next = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
+
+                if rank_calc%2==0:
+                    com_calc.Send(first_no_phantom, dest=before_process)
+                    com_calc.Recv(phantom_next, source=next_process)
+                    com_calc.Send(last_no_phantom, dest=next_process)
+                    com_calc.Recv(phantom_before, source=before_process)
+                else:
+                    com_calc.Recv(phantom_next, source=next_process)
+                    com_calc.Send(first_no_phantom, dest=before_process)
+                    com_calc.Recv(phantom_before, source=before_process)
+                    com_calc.Send(last_no_phantom, dest=next_process)
+
+                grid_loc.cells[:,0] = phantom_before
+                grid_loc.cells[:,-1] = phantom_next
 
             # Computing the local grid next iteration 
+        
+            diff = grid_loc.compute_next_iteration() 
+        
+            # Sending the results 
 
-            t1 = time.time()
-            diff = grid.compute_next_iteration()
+            if nbp_calc>1:
+                globCom.send([grid_loc.nx_loc, grid_loc.x_loc]+[diff], dest=0)
+            else:
+                globCom.send(diff, dest=0)
             t2 = time.time()
-            print(f"Temps calcul prochaine generation : {t2-t1:2.2e} secondes",end="\r")
-            globCom.send(diff, dest=0)
+            print(f"Temps calcul prochaine generation pour le rank {rank} : {t2-t1:2.2e} secondes",end="\r")
 
     if rank==0:
         pg.quit()
-
