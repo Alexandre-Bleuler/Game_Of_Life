@@ -8,7 +8,7 @@ de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
 A l'initialisation, certaines cellules sont vivantes, d'autres mortes.
 Le principe du jeu est alors d'itérer de telle sorte qu'à chaque itération, une cellule va devoir interagir avec
 les huit cellules voisines (gauche, droite, bas, haut et les quatre en diagonales.) L'interaction se fait selon les
-règles suivantes pour calculer l'irération suivante :
+règles suivantes pour calculer l'itération suivante :
     - Une cellule vivante avec moins de deux cellules voisines vivantes meurt ( sous-population )
     - Une cellule vivante avec deux ou trois cellules voisines vivantes reste vivante
     - Une cellule vivante avec plus de trois cellules voisines vivantes meurt ( sur-population )
@@ -44,28 +44,22 @@ class Grille:
     def __init__(self, rank_row, nbp_row, rank_col, nbp_col, dim, init_pattern=None, 
                  color_life=pg.Color("black"), color_dead=pg.Color("white")):
         
-        # ----- Découpage selon les lignes (load balancing) -----
-        # Chaque processus reçoit un nombre de lignes qui peut varier d'une unité
-        # pour équilibrer quand la division n'est pas parfaite
+
         row_dim = dim[0]
         reste_row = row_dim % nbp_row
         # Nombre de lignes locales pour ce processus
         ny_loc = row_dim // nbp_row + (1 if rank_row < reste_row else 0)
         
-        # Calcul du décalage (offset) pour savoir où on se trouve dans la grille globale
+        # Calcul du décala pour savoir où on se trouve dans la grille globale
         # C'est important pour reconstruire l'image plus tard
-        y_loc = 0
-        for r in range(rank_row):
-            y_loc += row_dim // nbp_row + (1 if r < reste_row else 0)
+        y_loc = sum(row_dim // nbp_row + (1 if r < reste_row else 0) for r in range(rank_row))
         
-        # ----- Découpage selon les colonnes -----
+        #  Découpage selon les colonnes 
         col_dim = dim[1]
         reste_col = col_dim % nbp_col
         nx_loc = col_dim // nbp_col + (1 if rank_col < reste_col else 0)
         
-        x_loc = 0
-        for c in range(rank_col):
-            x_loc += col_dim // nbp_col + (1 if c < reste_col else 0)
+        x_loc = sum(col_dim // nbp_col + (1 if c < reste_col else 0) for c in range(rank_col))
         
         # On garde ces infos pour les communications avec le processus d'affichage
         self.ny_loc = ny_loc
@@ -73,7 +67,7 @@ class Grille:
         self.nx_loc = nx_loc
         self.x_loc = x_loc
         
-        # Dimensions avec cellules fantômes (+2 pour les ghost cells)
+        # Dimensions avec cellules fantômes +2 pour les ghost cells
         # Comme expliqué dans le Cours 4 page 13
         self.dimensions = (ny_loc + 2, nx_loc + 2)
 
@@ -97,49 +91,32 @@ class Grille:
         self.col_dead = color_dead
 
     def compute_next_iteration(self):
-        """
-        Calcule la prochaine génération.
-        IMPORTANT: Les ghost cells doivent être à jour avant d'appeler cette fonction!
-        """
+
         ny, nx = self.dimensions
         next_cells = np.zeros(self.dimensions, dtype=np.uint8)
-        diff_cells = []
         
         # On ne calcule que sur les cellules internes (pas sur les ghost cells)
         for i in range(1, ny-1):
             for j in range(1, nx-1):
-                # Compter les voisins - on utilise TOUTES les cellules (internes + ghost)
-                # grace au modulo, ça gère automatiquement les bords toriques
-                voisins = 0
-                for di in [-1, 0, 1]:
-                    for dj in [-1, 0, 1]:
-                        if di == 0 and dj == 0:
-                            continue
-                        # Le modulo sur ny/nx permet d'accéder aux ghost cells
-                        ni = (i + di) % ny
-                        nj = (j + dj) % nx
-                        voisins += self.cells[ni, nj]
+                # Compter les voisins  on utilise toutes les cellules internes + ghost
                 
-                # Application des règles du jeu de la vie
-                if self.cells[i, j] == 1:
-                    if voisins in [2, 3]:
-                        next_cells[i, j] = 1
-                    else:
-                        # La cellule meurt - on note sa position locale
-                        diff_cells.append((i-1) * self.nx_loc + (j-1))
-                else:
-                    if voisins == 3:
-                        next_cells[i, j] = 1
-                        diff_cells.append((i-1) * self.nx_loc + (j-1))
+                voisins = sum(
+                    self.cells[(i + di) % ny, (j + dj) % nx]
+                    for di in [-1, 0, 1] for dj in [-1, 0, 1]
+                    if not (di == 0 and dj == 0)
+                )
+                
+                alive = self.cells[i, j]
+                if (alive and voisins in [2, 3]) or (not alive and voisins == 3):
+                    next_cells[i, j] = 1
         
         self.cells = next_cells
-        return diff_cells
+        # retourne la sous-grille intérieure complète sans ghost cells
+        return np.ascontiguousarray(self.cells[1:-1, 1:-1])
 
 
 class App:
-    """
-    Fenêtre d'affichage - Ne tourne que sur le processus 0
-    """
+
     def __init__(self, geometry, grid):
         self.grid = grid
         # Calcul de la taille d'une cellule en pixels
@@ -155,16 +132,13 @@ class App:
         # Ajustement de la taille de la fenêtre
         self.width = grid.dimensions[1] * self.size_x
         self.height = grid.dimensions[0] * self.size_y
-        # Création de la fenêtre Pygame
         self.screen = pg.display.set_mode((self.width, self.height))
         pg.display.set_caption(f"Jeu de la Vie - MPI {MPI.COMM_WORLD.size} processus")
 
     def compute_rectangle(self, i, j):
-        """Calcul le rectangle correspondant à la cellule (i,j) pour l'affichage"""
         return (self.size_x * j, self.height - self.size_y * (i + 1), self.size_x, self.size_y)
 
     def draw(self):
-        """Dessine toute la grille"""
         # Dessiner chaque cellule
         for i in range(self.grid.dimensions[0]):
             for j in range(self.grid.dimensions[1]):
@@ -186,68 +160,67 @@ class App:
         pg.display.update()
 
 
-def update_grid_2d(grid, y_loc, x_loc, diff, nx_loc):
-    """
-    Met à jour la grille globale à partir des différences locales
-    Fonction utilitaire pour le processus d'affichage
-    """
-    for idx in diff:
-        i = idx // nx_loc
-        j = idx % nx_loc
-        grid.cells[y_loc + i, x_loc + j] = 1 - grid.cells[y_loc + i, x_loc + j]
+def update_grid_2d(grid, y_loc, x_loc, subgrid, ny_loc, nx_loc):
+
+    grid.cells[y_loc+1 : y_loc+1+ny_loc, x_loc+1 : x_loc+1+nx_loc] = subgrid
 
 
 if __name__ == '__main__':
-    # ----- Initialisation MPI -----
+    # Initialisation MPI
     globCom = MPI.COMM_WORLD.Dup()
     nbp = globCom.size
     rank = globCom.rank
 
-    # ----- Organisation des processus en grille 2D -----
-    # On essaie d'avoir une grille la plus carrée possible
-    nbp_row = int(np.sqrt(nbp))
-    while nbp % nbp_row != 0:
-        nbp_row -= 1
-    nbp_col = nbp // nbp_row
-    
-    rank_row = rank // nbp_col
-    rank_col = rank % nbp_col
+    if nbp < 2:
+        if rank == 0:
+            print("Il faut au moins 2 processus.")
+        sys.exit(1)
 
+    #  Organisation des processus 
+    #  on sépare explicitement rank 0 (affichage) des ranks 1..N-1 (calcul).
+    # Dans le code original, rank 0 était inclus dans la grille de calcul ce qui
+    # causait un deadlock parce-qu'il  calculait jamais mais était compté dans nbp_row/nbp_col.
+    n_calc = nbp - 1          # nombre de processus de calcul
+    calc_rank = rank - 1      # rang dans la grille de calcul (invalide pour rank 0)
+
+    # On essaie d'avoir une grille la plus carrée possible
+    nbp_row = int(np.sqrt(n_calc))
+    while n_calc % nbp_row != 0:
+        nbp_row -= 1
+    nbp_col = n_calc // nbp_row
+    
     if rank == 0:
         print("=" * 50)
         print("JEU DE LA VIE - VERSION PARALLELE MPI")
         print("=" * 50)
         print(f"Grille de processus: {nbp_row} lignes x {nbp_col} colonnes")
-        print(f"Nombre total de processus: {nbp} (1 pour affichage, {nbp-1} pour calcul)")
+        print(f"Nombre total de processus: {nbp} (1 pour affichage, {n_calc} pour calcul)")
         print("=" * 50)
 
-    # Création des communicateurs pour les lignes et colonnes
-    # Ça facilite les communications entre voisins
-    row_comm = globCom.Split(color=rank_row, key=rank_col)
-    col_comm = globCom.Split(color=rank_col, key=rank_row)
+    # on calcule rank_row/rank_col uniquement pour les processus de calcul
+    if rank != 0:
+        rank_row = calc_rank // nbp_col
+        rank_col = calc_rank % nbp_col
 
-    # Identification des voisins (gestion du tore)
-    up = (rank_row - 1) % nbp_row
-    down = (rank_row + 1) % nbp_row
-    left = (rank_col - 1) % nbp_col
-    right = (rank_col + 1) % nbp_col
+        # quand la grille n'était pas carrée (ex: 1x3, col_comm n'avait qu'1 seul processus).
+        # On utilise uniquement globCom avec les rangs globaux des 8 voisins.
+        # Le rang global d'un processus de calcul = son calc_rank + 1 (car rank 0 = affichage).
+        def grank(rr, rc):
+            """Rang global du processus de calcul à la position (rr, rc) dans la grille."""
+            return (rr % nbp_row) * nbp_col + (rc % nbp_col) + 1
 
-    # Rangs globaux des voisins (pour les communications diagonales)
-    up_rank = up * nbp_col + rank_col
-    down_rank = down * nbp_col + rank_col
-    left_rank = rank_row * nbp_col + left
-    right_rank = rank_row * nbp_col + right
-    up_left_rank = up * nbp_col + left
-    up_right_rank = up * nbp_col + right
-    down_left_rank = down * nbp_col + left
-    down_right_rank = down * nbp_col + right
+        up_g    = grank(rank_row - 1, rank_col)      # voisin haut
+        down_g  = grank(rank_row + 1, rank_col)      # voisin bas
+        left_g  = grank(rank_row,     rank_col - 1)  # voisin gauche
+        right_g = grank(rank_row,     rank_col + 1)  # voisin droite
+        ul_g    = grank(rank_row - 1, rank_col - 1)  # coin haut-gauche
+        ur_g    = grank(rank_row - 1, rank_col + 1)  # coin haut-droit
+        dl_g    = grank(rank_row + 1, rank_col - 1)  # coin bas-gauche
+        dr_g    = grank(rank_row + 1, rank_col + 1)  # coin bas-droit
 
-    # ----- Initialisation Pygame (seulement sur le processus 0) -----
     if rank == 0:
         pg.init()
     
-    # ----- Paramètres du problème -----
-    # Dictionnaire des patterns pré-définis
     dico_patterns = {
         'blinker': ((5,5), [(2,1), (2,2), (2,3)]),
         'toad': ((6,6), [(2,2), (2,3), (2,4), (3,3), (3,4), (3,5)]),
@@ -272,7 +245,6 @@ if __name__ == '__main__':
         print(f"Pattern initial : {choice}")
         print(f"Résolution écran : {resx, resy}")
     
-    # ----- Distribution du pattern à tous les processus -----
     # Le processus 0 lit le pattern et le broadcast à tout le monde
     if rank == 0:
         try:
@@ -281,207 +253,164 @@ if __name__ == '__main__':
             print(f"Erreur: pattern '{choice}' inconnu")
             print("Patterns disponibles:", list(dico_patterns.keys()))
             globCom.Abort(1)
-    else:
-        dim_globale = None
-        pattern_global = None
-    
-    # Broadcast des dimensions globales
-    dim_globale = globCom.bcast(dim_globale, root=0)
-    
-    # Broadcast du pattern (plus compliqué car c'est une liste de tuples)
-    if rank == 0:
-        pattern_size = len(pattern_global)
-    else:
-        pattern_size = None
-    
-    pattern_size = globCom.bcast(pattern_size, root=0)
-    
-    if rank == 0:
         # Aplatir la liste pour l'envoi MPI
-        pattern_flat = []
-        for (i, j) in pattern_global:
-            pattern_flat.extend([i, j])
-        pattern_array = np.array(pattern_flat, dtype=np.int32)
+        pattern_flat = np.array([v for pt in pattern_global for v in pt], dtype=np.int32)
     else:
-        pattern_array = np.empty(pattern_size * 2, dtype=np.int32)
+        dim_globale  = None
+        pattern_flat = None
     
-    # Broadcast du tableau aplati
-    globCom.Bcast(pattern_array, root=0)
+    
+    # on broadcast directement pattern_flat (tableau numpy aplati) en une seule opération
+    # au lieu de broadcaster séparément la taille puis le tableau
+    dim_globale  = globCom.bcast(dim_globale, root=0)
+    pattern_flat = globCom.bcast(pattern_flat, root=0)
     
     # Reconstruction du pattern pour tous les processus
-    pattern_local = []
-    for k in range(0, len(pattern_array), 2):
-        pattern_local.append((pattern_array[k], pattern_array[k+1]))
+    pattern_local = [(pattern_flat[k], pattern_flat[k+1]) for k in range(0, len(pattern_flat), 2)]
     
-    # ----- Création des grilles locales -----
-    # Tous les processus créent leur grille locale
-    grid_loc = Grille(rank_row, nbp_row, rank_col, nbp_col, dim_globale, 
-                      init_pattern=pattern_local)
-    
-    # Le processus 0 crée aussi une grille globale pour l'affichage
+
     if rank == 0:
         grid_global = Grille(0, 1, 0, 1, dim_globale, init_pattern=pattern_local)
         appli = App((resx, resy), grid_global)
     else:
-        appli = None
+        grid_loc = Grille(rank_row, nbp_row, rank_col, nbp_col, dim_globale,
+                          init_pattern=pattern_local)
 
-        # ----- Boucle principale -----
-    first_iter = True
+
     mustContinue = True
     iter_count = 0
     
-    # Pour les mesures de performance
+    # mesures de performance
     temps_calcul = 0.0
     temps_comm = 0.0
     debut_global = time.time()
     
     while mustContinue:
         if rank == 0:
-            # ----- PROCESSUS 0 : AFFICHAGE -----
-            # (rien ne change ici, gardez votre code existant)
             
-            if not first_iter:
-                # Réception des mises à jour
-                recu = 0
-                while recu < nbp - 1:
-                    data = globCom.recv(source=MPI.ANY_SOURCE)
-                    proc_rank, y_loc, x_loc, diff, nx_loc = data
-                    update_grid_2d(grid_global, y_loc, x_loc, diff, nx_loc)
-                    recu += 1
 
+            # on affiched'abord l'état courant (permet de voir l'état initial
+            # dès le démarrage), puis on attend les mises à jour des workers
             appli.draw()
-            
+            time.sleep(0.05)
+
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     mustContinue = False
+                    #signal d'arrêt envoyé avec tag=99 dédié pour ne pas
+                    # interférer avec les messages de données (tag=50)
                     for i in range(1, nbp):
-                        globCom.send(False, dest=i)
-            
-            if first_iter:
-                first_iter = False
-            time.sleep(0.05)
+                        globCom.send(False, dest=i, tag=99)
+
+            if not mustContinue:
+                break
+
+            # Réception des sous-grilles de tous les processus de calcul
+            for _ in range(n_calc):
+                data = globCom.recv(source=MPI.ANY_SOURCE, tag=50)
+                _, y_loc, x_loc, subgrid, ny_loc_r, nx_loc_r = data
+                update_grid_2d(grid_global, y_loc, x_loc, subgrid, ny_loc_r, nx_loc_r)
 
         else:
-            # ----- PROCESSUS DE CALCUL (rank != 0) -----
-            # C'EST ICI QUE VOUS DEVEZ METTRE LE NOUVEAU CODE
-            # Remplacez TOUT le bloc else existant par ceci :
+
+            debut_comm = time.time()
+
+            ny_loc = grid_loc.ny_loc
+            nx_loc = grid_loc.nx_loc
+
+            # échange des ghost cells via globCom uniquement (plus de row_comm/col_comm).
+            # La règle des tags est symétrique : si je reçois "du haut" avec tag=1,
+            # mon voisin du haut m'envoie avec tag=1 parce que pour lui je suis "son bas".
+            # Ainsi chaque paire est cohérente des deux côtés.
+
+            # Buffers de réception pour les ghost cells
+            buf_up    = np.empty(nx_loc, dtype=np.uint8)
+            buf_down  = np.empty(nx_loc, dtype=np.uint8)
+            buf_left  = np.empty(ny_loc, dtype=np.uint8)
+            buf_right = np.empty(ny_loc, dtype=np.uint8)
+            buf_ul    = np.empty(1, dtype=np.uint8)
+            buf_ur    = np.empty(1, dtype=np.uint8)
+            buf_dl    = np.empty(1, dtype=np.uint8)
+            buf_dr    = np.empty(1, dtype=np.uint8)
+
+            # Données à envoyer : bords intérieurs de la sous-grille 
+            send_top    = np.ascontiguousarray(grid_loc.cells[1,  1:-1])   # ma 1ère ligne réelle
+            send_bottom = np.ascontiguousarray(grid_loc.cells[-2, 1:-1])  # ma dernière ligne réelle
+            send_left   = np.ascontiguousarray(grid_loc.cells[1:-1, 1])   # ma 1ère colonne réelle
+            send_right  = np.ascontiguousarray(grid_loc.cells[1:-1, -2])  # ma dernière colonne réelle
+            send_ul     = np.array([grid_loc.cells[1,   1]],  dtype=np.uint8)
+            send_ur     = np.array([grid_loc.cells[1,  -2]],  dtype=np.uint8)
+            send_dl     = np.array([grid_loc.cells[-2,  1]],  dtype=np.uint8)
+            send_dr     = np.array([grid_loc.cells[-2, -2]],  dtype=np.uint8)
+
+            # Lancer toutes les réceptions et envois non-bloquants en une seule liste
+            # tag=1 : "ligne venant du haut"   tag=2 : "ligne venant du bas"
+            # tag=3 : "col venant de gauche"   tag=4 : "col venant de droite"
+            # tag=5..8 : coins (ul, ur, dl, dr)
+            reqs = [
+                globCom.Irecv(buf_up,    source=up_g,    tag=1),
+                globCom.Irecv(buf_down,  source=down_g,  tag=2),
+                globCom.Irecv(buf_left,  source=left_g,  tag=3),
+                globCom.Irecv(buf_right, source=right_g, tag=4),
+                globCom.Irecv(buf_ul,    source=ul_g,    tag=5),
+                globCom.Irecv(buf_ur,    source=ur_g,    tag=6),
+                globCom.Irecv(buf_dl,    source=dl_g,    tag=7),
+                globCom.Irecv(buf_dr,    source=dr_g,    tag=8),
+                # Mon voisin du haut reçoit ma ligne du haut avec tag=2 (je suis son bas)
+                globCom.Isend(send_top,    dest=up_g,    tag=2),
+                globCom.Isend(send_bottom, dest=down_g,  tag=1),
+                globCom.Isend(send_left,   dest=left_g,  tag=4),
+                globCom.Isend(send_right,  dest=right_g, tag=3),
+                globCom.Isend(send_ul,     dest=ul_g,    tag=8),
+                globCom.Isend(send_ur,     dest=ur_g,    tag=7),
+                globCom.Isend(send_dl,     dest=dl_g,    tag=6),
+                globCom.Isend(send_dr,     dest=dr_g,    tag=5),
+            ]
+            MPI.Request.Waitall(reqs)
+
+            # Copier les données reçues dans les ghost cells
+            grid_loc.cells[0,  1:-1] = buf_up      # ghost haut
+            grid_loc.cells[-1, 1:-1] = buf_down    # ghost bas
+            grid_loc.cells[1:-1, 0]  = buf_left    # ghost gauche
+            grid_loc.cells[1:-1, -1] = buf_right   # ghost droite
+            grid_loc.cells[0,  0]    = buf_ul[0]   # coin haut-gauche
+            grid_loc.cells[0,  -1]   = buf_ur[0]   # coin haut-droit
+            grid_loc.cells[-1, 0]    = buf_dl[0]   # coin bas-gauche
+            grid_loc.cells[-1, -1]   = buf_dr[0]   # coin bas-droit
+
+            temps_comm += time.time() - debut_comm
+
+            # Calcul de la prochaine génération 
+            debut_calcul = time.time()
+            subgrid = grid_loc.compute_next_iteration()
+            temps_calcul += time.time() - debut_calcul
+
+            # Envoi de la sous-grille complète au processus 0
+            # on envoie aussi ny_loc pour que update_grid_2d puisse
+            # reconstruire correctement la zone dans la grille globale
+            globCom.send([rank, grid_loc.y_loc, grid_loc.x_loc, subgrid,
+                          grid_loc.ny_loc, grid_loc.nx_loc], dest=0, tag=50)
+
+            iter_count += 1
             
-            if not first_iter:
-                debut_comm = time.time()
-                
-                # === Nettoyage des anciennes requêtes ===
-                req_list = []
-                
-                # ---- 1. Échange des lignes fantômes (vertical) ----
-                # Buffers pour les réceptions
-                buffer_haut = np.empty(grid_loc.nx_loc, dtype=np.uint8)   # Pour la ligne du haut
-                buffer_bas = np.empty(grid_loc.nx_loc, dtype=np.uint8)    # Pour la ligne du bas
-                
-                # Lancer les réceptions non-bloquantes
-                req = row_comm.Irecv(buffer_bas, source=down, tag=11)      # Réception du bas
-                req_list.append(req)
-                req = row_comm.Irecv(buffer_haut, source=up, tag=12)       # Réception du haut
-                req_list.append(req)
-                
-                # Préparer les envois (versions contiguës)
-                ligne_haut = np.ascontiguousarray(grid_loc.cells[1, 1:-1])  # Ma ligne du haut
-                ligne_bas = np.ascontiguousarray(grid_loc.cells[-2, 1:-1]) # Ma ligne du bas
-                
-                # Lancer les envois non-bloquants
-                req = row_comm.Isend(ligne_haut, dest=up, tag=12)           # Envoi vers le haut
-                req_list.append(req)
-                req = row_comm.Isend(ligne_bas, dest=down, tag=11)          # Envoi vers le bas
-                req_list.append(req)
-                
-                # Attendre la fin des communications verticales
-                MPI.Request.Waitall(req_list)
-                
-                # Copier les données reçues dans les ghost cells
-                grid_loc.cells[-1, 1:-1] = buffer_bas      # La ligne du bas reçue va en haut
-                grid_loc.cells[0, 1:-1] = buffer_haut      # La ligne du haut reçue va en bas
-                
-                # ---- 2. Échange des colonnes fantômes (horizontal) ----
-                req_list = []
-                
-                # Buffers pour les colonnes
-                buffer_gauche = np.empty(grid_loc.ny_loc, dtype=np.uint8)
-                buffer_droite = np.empty(grid_loc.ny_loc, dtype=np.uint8)
-                
-                # Réceptions non-bloquantes
-                req = col_comm.Irecv(buffer_droite, source=right, tag=21)  # Réception de droite
-                req_list.append(req)
-                req = col_comm.Irecv(buffer_gauche, source=left, tag=22)   # Réception de gauche
-                req_list.append(req)
-                
-                # Préparer les envois
-                col_gauche = np.ascontiguousarray(grid_loc.cells[1:-1, 1])   # Ma colonne de gauche
-                col_droite = np.ascontiguousarray(grid_loc.cells[1:-1, -2])  # Ma colonne de droite
-                
-                # Envois non-bloquants
-                req = col_comm.Isend(col_gauche, dest=left, tag=22)      # Envoi vers la gauche
-                req_list.append(req)
-                req = col_comm.Isend(col_droite, dest=right, tag=21)     # Envoi vers la droite
-                req_list.append(req)
-                
-                # Attendre la fin
-                MPI.Request.Waitall(req_list)
-                
-                # Copier dans les ghost cells
-                grid_loc.cells[1:-1, -1] = buffer_droite   # Ce qui vient de droite va à gauche? Non, à droite!
-                grid_loc.cells[1:-1, 0] = buffer_gauche    # Ce qui vient de gauche va à droite? Non, à gauche!
-                # Correction: 
-                # buffer_droite vient du voisin de droite, donc il va dans la ghost cell de droite (index -1)
-                # buffer_gauche vient du voisin de gauche, donc il va dans la ghost cell de gauche (index 0)
-                # C'est bon, c'est correct!
-                
-                # ---- 3. Échange des coins (diagonales) ----
-                # Envoyer mes 4 coins (en scalaires avec .item())
-                globCom.send(grid_loc.cells[1, 1].item(), dest=up_left_rank, tag=31)
-                globCom.send(grid_loc.cells[1, -2].item(), dest=up_right_rank, tag=32)
-                globCom.send(grid_loc.cells[-2, 1].item(), dest=down_left_rank, tag=33)
-                globCom.send(grid_loc.cells[-2, -2].item(), dest=down_right_rank, tag=34)
-                
-                # Recevoir les 4 coins fantômes
-                grid_loc.cells[0, 0] = globCom.recv(source=down_right_rank, tag=31)
-                grid_loc.cells[0, -1] = globCom.recv(source=down_left_rank, tag=32)
-                grid_loc.cells[-1, 0] = globCom.recv(source=up_right_rank, tag=33)
-                grid_loc.cells[-1, -1] = globCom.recv(source=up_left_rank, tag=34)
-                
-                temps_comm += time.time() - debut_comm
-                
-                # === Calcul de la prochaine génération ===
-                debut_calcul = time.time()
-                diff = grid_loc.compute_next_iteration()
-                temps_calcul += time.time() - debut_calcul
-                
-                # === Envoi des résultats au processus 0 ===
-                globCom.send([rank, grid_loc.y_loc, grid_loc.x_loc, diff, grid_loc.nx_loc], 
-                           dest=0)
+            # Affichage des perfs toutes les 100 itérations
+            if iter_count % 100 == 0 and rank == 1:
+                print(f"\n[Perf] Itération {iter_count}:")
+                print(f"       Temps calcul: {temps_calcul/iter_count*1000:.2f} ms/it")
+                print(f"       Temps comm: {temps_comm/iter_count*1000:.2f} ms/it")
+                print(f"       Ratio comm/calcul: {temps_comm/temps_calcul:.2f}")
 
-                iter_count += 1
-                
-                # Affichage des perfs toutes les 100 itérations
-                if iter_count % 100 == 0 and rank == 1:
-                    print(f"\n[Perf] Itération {iter_count}:")
-                    if iter_count > 0:
-                        print(f"       Temps calcul: {temps_calcul/iter_count*1000:.2f} ms/it")
-                        print(f"       Temps comm: {temps_comm/iter_count*1000:.2f} ms/it")
-                        print(f"       Ratio comm/calcul: {temps_comm/temps_calcul:.2f}")
+            # MODIF: tag=99 dédié pour le signal d'arrêt afin de ne pas
+            # confondre avec les messages de données 
+            if globCom.Iprobe(source=0, tag=99):
+                mustContinue = globCom.recv(source=0, tag=99)
 
-            if first_iter:
-                first_iter = False
-            
-            # Vérifier si le processus 0 demande l'arrêt
-            if globCom.Iprobe(source=0):
-                mustContinue = globCom.recv(source=0)
-
-    # ----- Fin du programme -----
     if rank == 0:
         pg.quit()
         print("\n" + "=" * 50)
         print("RÉSUMÉ DES PERFORMANCES")
         print("=" * 50)
-        print(f"Nombre de processus de calcul: {nbp-1}")
+        print(f"Nombre de processus de calcul: {n_calc}")
         print(f"Grille de processus: {nbp_row}x{nbp_col}")
         print(f"Dimensions globales: {dim_globale[0]}x{dim_globale[1]}")
         print("=" * 50)
