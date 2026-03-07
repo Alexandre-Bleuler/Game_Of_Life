@@ -91,12 +91,7 @@ class Grille:
         self.col_dead = color_dead
 
     def compute_next_iteration(self):
-        """
 
-        on ne retourne plus une liste de diffs ,positions qui changent, mais
-        directement la sous-grille intérieure complète (sans ghost cells).
-        
-        """
         ny, nx = self.dimensions
         next_cells = np.zeros(self.dimensions, dtype=np.uint8)
         
@@ -166,14 +161,7 @@ class App:
 
 
 def update_grid_2d(grid, y_loc, x_loc, subgrid, ny_loc, nx_loc):
-    """
-    Met à jour la grille globale à partir de la sous-grille reçue.
-    Fonction utilitaire pour le processus d'affichage.
 
-    Au lieu d'appliquer des diffs par toggle, on écrase directement
-    la zone correspondante avec la sous-grille complète reçue du worker.
-    Le +1 sur les indices est nécessaire parce que  grid_global a aussi des ghost cells.
-    """
     grid.cells[y_loc+1 : y_loc+1+ny_loc, x_loc+1 : x_loc+1+nx_loc] = subgrid
 
 
@@ -309,7 +297,7 @@ if __name__ == '__main__':
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     mustContinue = False
-                    # signal d'arrêt envoyé avec tag=99 dédié pour ne pas
+                    #signal d'arrêt envoyé avec tag=99 dédié pour ne pas
                     # interférer avec les messages de données (tag=50)
                     for i in range(1, nbp):
                         globCom.send(False, dest=i, tag=99)
