@@ -28,8 +28,9 @@ import numpy as np
 import time
 import sys
 from mpi4py import MPI
+import game_of_life_2process as gr
 
-class Grille:
+class Grille_box:
     """
     Grille torique décrivant l'automate cellulaire avec découpage 2D.
     
@@ -94,75 +95,38 @@ class Grille:
 
         ny, nx = self.dimensions
         next_cells = np.zeros(self.dimensions, dtype=np.uint8)
-        
+        diff_cells = []
+
         # On ne calcule que sur les cellules internes (pas sur les ghost cells)
-        for i in range(1, ny-1):
-            for j in range(1, nx-1):
-                # Compter les voisins  on utilise toutes les cellules internes + ghost
-                
-                voisins = sum(
-                    self.cells[(i + di) % ny, (j + dj) % nx]
-                    for di in [-1, 0, 1] for dj in [-1, 0, 1]
-                    if not (di == 0 and dj == 0)
-                )
-                
-                alive = self.cells[i, j]
-                if (alive and voisins in [2, 3]) or (not alive and voisins == 3):
-                    next_cells[i, j] = 1
-        
-        self.cells = next_cells
-        # retourne la sous-grille intérieure complète sans ghost cells
-        return np.ascontiguousarray(self.cells[1:-1, 1:-1])
-
-
-class App:
-
-    def __init__(self, geometry, grid):
-        self.grid = grid
-        # Calcul de la taille d'une cellule en pixels
-        self.size_x = geometry[1] // grid.dimensions[1]
-        self.size_y = geometry[0] // grid.dimensions[0]
-        
-        # On affiche les lignes de la grille seulement si les cellules sont assez grandes
-        if self.size_x > 4 and self.size_y > 4:
-            self.draw_color = pg.Color('lightgrey')
-        else:
-            self.draw_color = None
-            
-        # Ajustement de la taille de la fenêtre
-        self.width = grid.dimensions[1] * self.size_x
-        self.height = grid.dimensions[0] * self.size_y
-        self.screen = pg.display.set_mode((self.width, self.height))
-        pg.display.set_caption(f"Jeu de la Vie - MPI {MPI.COMM_WORLD.size} processus")
-
-    def compute_rectangle(self, i, j):
-        return (self.size_x * j, self.height - self.size_y * (i + 1), self.size_x, self.size_y)
-
-    def draw(self):
-        # Dessiner chaque cellule
-        for i in range(self.grid.dimensions[0]):
-            for j in range(self.grid.dimensions[1]):
-                if self.grid.cells[i, j] == 0:
-                    color = self.grid.col_dead
+        for i in range(1, ny-1): 
+            i_above = (i+ny-1)%ny # +ny pour le cas particulier i==0
+            i_below = (i+ny+1)%ny
+            for j in range(1,nx-1): # not updating ghost columns, it will be done by another process
+                j_left = (j-1+nx)%nx
+                j_right= (j+1)%nx
+                voisins_i = [i_above,i_abbpsum(voisines)
+                if self.cells[i,j] == 1: # Si la cellule est vivante
+                    if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
+                        next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
+                        diff_cells.append((i-1)*(nx-2)+j-1)
+                    else:
+                        next_cells[i,j] = 1 # Sinon elle reste vivante
+                elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
+                    next_cells[i,j] = 1         # Naissance de la cellule
+                    diff_cells.append((i-1)*(nx-2)+j-1)
                 else:
-                    color = self.grid.col_life
-                self.screen.fill(color, self.compute_rectangle(i, j))
-        
-        # Dessiner les lignes de la grille si demandé
-        if self.draw_color is not None:
-            for i in range(self.grid.dimensions[0]):
-                pg.draw.line(self.screen, self.draw_color, 
-                           (0, i * self.size_y), (self.width, i * self.size_y))
-            for j in range(self.grid.dimensions[1]):
-                pg.draw.line(self.screen, self.draw_color,
-                           (j * self.size_x, 0), (j * self.size_x, self.height))
-        
-        pg.display.update()
+                    next_cells[i,j] = 0         # Morte, elle reste morte.
+        self.cells = next_cells
+        return np.ascontiguousarray(diff_cells)
 
 
-def update_grid_2d(grid, y_loc, x_loc, subgrid, ny_loc, nx_loc):
 
-    grid.cells[y_loc+1 : y_loc+1+ny_loc, x_loc+1 : x_loc+1+nx_loc] = subgrid
+
+def update_grid_2d(grid, y_loc, x_loc, diff, ny_loc, nx_loc):
+    for number in diff: 
+        i=number//nx_loc
+        j=number%nx_loc
+        grid.cells[y_loc+i,x_loc+j]=1-grid.cells[y_loc+i,x_loc+j]
 
 
 if __name__ == '__main__':
@@ -221,60 +185,47 @@ if __name__ == '__main__':
     if rank == 0:
         pg.init()
     
-    dico_patterns = {
-        'blinker': ((5,5), [(2,1), (2,2), (2,3)]),
-        'toad': ((6,6), [(2,2), (2,3), (2,4), (3,3), (3,4), (3,5)]),
-        'glider': ((100,90), [(1,1), (2,2), (2,3), (3,1), (3,2)]),
-        'acorn': ((100,100), [(51,52), (52,54), (53,51), (53,52), (53,55), (53,56), (53,57)]),
-        'beacon': ((6,6), [(1,3), (1,4), (2,3), (2,4), (3,1), (3,2), (4,1), (4,2)]),
-        'pulsar': ((17,17), [(2,4), (2,5), (2,6), (7,4), (7,5), (7,6), (9,4), (9,5), (9,6), 
-                            (14,4), (14,5), (14,6), (2,10), (2,11), (2,12), (7,10), (7,11), 
-                            (7,12), (9,10), (9,11), (9,12), (14,10), (14,11), (14,12)]),
+    dico_patterns = { # Dimension et pattern dans un tuple
+        'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
+        'toad'    : ((6,6),[(2,2),(2,3),(2,4),(3,3),(3,4),(3,5)]),
+        "acorn"   : ((100,100), [(51,52),(52,54),(53,51),(53,52),(53,55),(53,56),(53,57)]),
+        "beacon"  : ((6,6), [(1,3),(1,4),(2,3),(2,4),(3,1),(3,2),(4,1),(4,2)]),
+        "boat" : ((5,5),[(1,1),(1,2),(2,1),(2,3),(3,2)]),
+        "glider": ((100,90),[(1,1),(2,2),(2,3),(3,1),(3,2)]),
+        "glider_gun": ((400,400),[(51,76),(52,74),(52,76),(53,64),(53,65),(53,72),(53,73),(53,86),(53,87),(54,63),(54,67),(54,72),(54,73),(54,86),(54,87),(55,52),(55,53),(55,62),(55,68),(55,72),(55,73),(56,52),(56,53),(56,62),(56,66),(56,68),(56,69),(56,74),(56,76),(57,62),(57,68),(57,76),(58,63),(58,67),(59,64),(59,65)]),
+        "space_ship": ((25,25),[(11,13),(11,14),(12,11),(12,12),(12,14),(12,15),(13,11),(13,12),(13,13),(13,14),(14,12),(14,13)]),
+        "die_hard" : ((100,100), [(51,57),(52,51),(52,52),(53,52),(53,56),(53,57),(53,58)]),
+        "pulsar": ((17,17),[(2,4),(2,5),(2,6),(7,4),(7,5),(7,6),(9,4),(9,5),(9,6),(14,4),(14,5),(14,6),(2,10),(2,11),(2,12),(7,10),(7,11),(7,12),(9,10),(9,11),(9,12),(14,10),(14,11),(14,12),(4,2),(5,2),(6,2),(4,7),(5,7),(6,7),(4,9),(5,9),(6,9),(4,14),(5,14),(6,14),(10,2),(11,2),(12,2),(10,7),(11,7),(12,7),(10,9),(11,9),(12,9),(10,14),(11,14),(12,14)]),
+        "floraison" : ((40,40), [(19,18),(19,19),(19,20),(20,17),(20,19),(20,21),(21,18),(21,19),(21,20)]),
+        "block_switch_engine" : ((400,400), [(201,202),(201,203),(202,202),(202,203),(211,203),(212,204),(212,202),(214,204),(214,201),(215,201),(215,202),(216,201)]),
+        "u" : ((200,200), [(101,101),(102,102),(103,102),(103,101),(104,103),(105,103),(105,102),(105,101),(105,105),(103,105),(102,105),(101,105),(101,104)]),
+        "flat" : ((200,400), [(80,200),(81,200),(82,200),(83,200),(84,200),(85,200),(86,200),(87,200), (89,200),(90,200),(91,200),(92,200),(93,200),(97,200),(98,200),(99,200),(106,200),(107,200),(108,200),(109,200),(110,200),(111,200),(112,200),(114,200),(115,200),(116,200),(117,200),(118,200)])
     }
     
     # Récupération du choix depuis la ligne de commande
+    
     choice = 'glider'
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 :
         choice = sys.argv[1]
-    
-    resx, resy = 800, 800
-    if len(sys.argv) > 3:
-        resx, resy = int(sys.argv[2]), int(sys.argv[3])
-    
-    if rank == 0:
-        print(f"Pattern initial : {choice}")
-        print(f"Résolution écran : {resx, resy}")
-    
-    # Le processus 0 lit le pattern et le broadcast à tout le monde
-    if rank == 0:
-        try:
-            dim_globale, pattern_global = dico_patterns[choice]
-        except KeyError:
-            print(f"Erreur: pattern '{choice}' inconnu")
-            print("Patterns disponibles:", list(dico_patterns.keys()))
-            globCom.Abort(1)
-        # Aplatir la liste pour l'envoi MPI
-        pattern_flat = np.array([v for pt in pattern_global for v in pt], dtype=np.int32)
-    else:
-        dim_globale  = None
-        pattern_flat = None
-    
-    
-    # on broadcast directement pattern_flat (tableau numpy aplati) en une seule opération
-    # au lieu de broadcaster séparément la taille puis le tableau
-    dim_globale  = globCom.bcast(dim_globale, root=0)
-    pattern_flat = globCom.bcast(pattern_flat, root=0)
-    
-    # Reconstruction du pattern pour tous les processus
-    pattern_local = [(pattern_flat[k], pattern_flat[k+1]) for k in range(0, len(pattern_flat), 2)]
+    resx = 800
+    resy = 800
+    if len(sys.argv) > 3 :
+        resx = int(sys.argv[2])
+        resy = int(sys.argv[3])
+    print(f"Pattern initial choisi : {choice}")
+    print(f"resolution ecran : {resx,resy}")
+    try:
+        init_pattern = dico_patterns[choice]
+    except KeyError:
+        print("No such pattern. Available ones are:", dico_patterns.keys())
+        exit(1)
     
 
     if rank == 0:
-        grid_global = Grille(0, 1, 0, 1, dim_globale, init_pattern=pattern_local)
-        appli = App((resx, resy), grid_global)
+        grid_global = gr.Grille(*init_pattern)
+        appli = gr.App((resx, resy), grid_global)
     else:
-        grid_loc = Grille(rank_row, nbp_row, rank_col, nbp_col, dim_globale,
-                          init_pattern=pattern_local)
+        grid_loc = Grille_box(rank_row, nbp_row, rank_col, nbp_col,*init_pattern)
 
 
     mustContinue = True
@@ -308,8 +259,8 @@ if __name__ == '__main__':
             # Réception des sous-grilles de tous les processus de calcul
             for _ in range(n_calc):
                 data = globCom.recv(source=MPI.ANY_SOURCE, tag=50)
-                _, y_loc, x_loc, subgrid, ny_loc_r, nx_loc_r = data
-                update_grid_2d(grid_global, y_loc, x_loc, subgrid, ny_loc_r, nx_loc_r)
+                _, y_loc, x_loc, diff, ny_loc_r, nx_loc_r = data
+                update_grid_2d(grid_global, y_loc, x_loc, diff, ny_loc_r, nx_loc_r)
 
         else:
 
@@ -382,13 +333,13 @@ if __name__ == '__main__':
 
             # Calcul de la prochaine génération 
             debut_calcul = time.time()
-            subgrid = grid_loc.compute_next_iteration()
+            diff = grid_loc.compute_next_iteration()
             temps_calcul += time.time() - debut_calcul
 
             # Envoi de la sous-grille complète au processus 0
             # on envoie aussi ny_loc pour que update_grid_2d puisse
             # reconstruire correctement la zone dans la grille globale
-            globCom.send([rank, grid_loc.y_loc, grid_loc.x_loc, subgrid,
+            globCom.send([rank, grid_loc.y_loc, grid_loc.x_loc, diff,
                           grid_loc.ny_loc, grid_loc.nx_loc], dest=0, tag=50)
 
             iter_count += 1
