@@ -1,25 +1,5 @@
 """
-Le jeu de la vie
-################
-Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
-de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
-    - un état vivant
-    - un état mort
-A l'initialisation, certaines cellules sont vivantes, d'autres mortes.
-Le principe du jeu est alors d'itérer de telle sorte qu'à chaque itération, une cellule va devoir interagir avec
-les huit cellules voisines (gauche, droite, bas, haut et les quatre en diagonales.) L'interaction se fait selon les
-règles suivantes pour calculer l'irération suivante :
-    - Une cellule vivante avec moins de deux cellules voisines vivantes meurt ( sous-population )
-    - Une cellule vivante avec deux ou trois cellules voisines vivantes reste vivante
-    - Une cellule vivante avec plus de trois cellules voisines vivantes meurt ( sur-population )
-    - Une cellule morte avec exactement trois cellules voisines vivantes devient vivante ( reproduction )
-
-Pour ce projet, on change légèrement les règles en transformant la grille infinie en un tore contenant un
-nombre fini de cellules. Les cellules les plus à gauche ont pour voisines les cellules les plus à droite
-et inversement, et de même les cellules les plus en haut ont pour voisines les cellules les plus en bas
-et inversement.
-
-On itère ensuite pour étudier la façon dont évolue la population des cellules sur la grille.
+Le jeu de la vie parallélisé sur deux processeurs (un d'affichage et un de calcul).
 """
 import pygame  as pg
 import numpy   as np

@@ -1,25 +1,5 @@
 """
 Le jeu de la vie parallélisé selon les lignes de la grille. 
-################
-Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
-de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
-    - un état vivant
-    - un état mort
-A l'initialisation, certaines cellules sont vivantes, d'autres mortes.
-Le principe du jeu est alors d'itérer de telle sorte qu'à chaque itération, une cellule va devoir interagir avec
-les huit cellules voisines (gauche, droite, bas, haut et les quatre en diagonales.) L'interaction se fait selon les
-règles suivantes pour calculer l'irération suivante :
-    - Une cellule vivante avec moins de deux cellules voisines vivantes meurt ( sous-population )
-    - Une cellule vivante avec deux ou trois cellules voisines vivantes reste vivante
-    - Une cellule vivante avec plus de trois cellules voisines vivantes meurt ( sur-population )
-    - Une cellule morte avec exactement trois cellules voisines vivantes devient vivante ( reproduction )
-
-Pour ce projet, on change légèrement les règles en transformant la grille infinie en un tore contenant un
-nombre fini de cellules. Les cellules les plus à gauche ont pour voisines les cellules les plus à droite
-et inversement, et de même les cellules les plus en haut ont pour voisines les cellules les plus en bas
-et inversement.
-
-On itère ensuite pour étudier la façon dont évolue la population des cellules sur la grille.
 """
 import pygame  as pg
 import numpy   as np
@@ -194,6 +174,8 @@ if __name__ == '__main__':
         else:
             grid_loc = gr.Grille(*init_pattern)
 
+        first_iter=True  
+
         # Checking the first iteration
 
 
@@ -249,14 +231,27 @@ if __name__ == '__main__':
         
             diff = grid_loc.compute_next_iteration() 
         
+
             # Sending the results 
 
             if nbp_calc>1:
-                globCom.send([grid_loc.y_loc]+[diff], dest=0)
+                
+                # Ensuring all the process have sent the results of the precedent iteration
+
+                if not first_iter:
+                    req.wait()
+                else:
+                    first_iter=False
+
+                req=globCom.isend([grid_loc.y_loc]+[diff], dest=0)
+                
             else:
-                globCom.send(diff, dest=0)
+                globCom.send(diff.copy(), dest=0)
+
             t2 = time.time()
             print(f"Temps calcul prochaine generation pour le rank {rank} : {t2-t1:2.2e} secondes",end="\r")
+
+        globCom.Bcast(np.array([0]), root=0)
 
     if rank==0:
         pg.quit()
