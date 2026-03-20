@@ -5,6 +5,8 @@ import pygame  as pg
 import numpy   as np
 import game_of_life_2process as gr
 
+ITER_PRINT=500 # Printing performances every ITER_PRINT iterations
+
 class Grille_Column:
     """
     Grille torique décrivant l'automate cellulaire.
@@ -26,6 +28,9 @@ class Grille_Column:
         if nbp<2:
             raise ValueError("Can't use a Grid_Line object with nbp<2!")
 
+        # Defining the local dimensions of the grid and saving the corresponding
+        # begining column and row in the global grid.
+
         column_dim=dim[1]
         reste = column_dim%nbp
         nx_loc = column_dim//nbp + (1 if rank<reste else 0) 
@@ -34,6 +39,9 @@ class Grille_Column:
         self.nx_loc = nx_loc
         self.x_loc = x_loc
         self.dimensions = (dim[0], nx_loc+2)
+        self.nx_global = dim[1]
+
+        # Initializing the grid
 
         if init_pattern is not None:
             self.cells = np.zeros(self.dimensions, dtype=np.uint8)
@@ -72,28 +80,17 @@ class Grille_Column:
                 if self.cells[i,j] == 1: # Si la cellule est vivante
                     if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
                         next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
-                        diff_cells.append(i*(nx-2)+j-1)
+                        diff_cells.append(i*self.nx_global+self.x_loc+j-1)
                     else:
                         next_cells[i,j] = 1 # Sinon elle reste vivante
                 elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
                     next_cells[i,j] = 1         # Naissance de la cellule
-                    diff_cells.append(i*(nx-2)+j-1)
+                    diff_cells.append(i*self.nx_global+self.x_loc+j-1)
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
         return diff_cells
 
-
-def update_grid_column(grid, diff, nbp_calc=1, nx_loc=None, x_loc=None):
-    for number in diff: 
-        if nbp_calc>1:
-            i=number//nx_loc
-            j=number%nx_loc
-            grid.cells[i,x_loc+j]=1-grid.cells[i,x_loc+j]
-        else:
-            i=number//grid.dimensions[1]
-            j=number%grid.dimensions[1]
-            grid.cells[i,j]=1-grid.cells[i,j]
 
 if __name__ == '__main__':
     import time
@@ -109,7 +106,9 @@ if __name__ == '__main__':
     if nbp < 2: 
         raise ValueError("Need at least 2 processes to parallelize the Game of Life!")
 
-    pg.init()
+    if rank==0:
+        pg.init()
+
     dico_patterns = { # Dimension et pattern dans un tuple
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
         'toad'    : ((6,6),[(2,2),(2,3),(2,4),(3,3),(3,4),(3,5)]),
@@ -134,8 +133,9 @@ if __name__ == '__main__':
     if len(sys.argv) > 3 :
         resx = int(sys.argv[2])
         resy = int(sys.argv[3])
-    print(f"Pattern initial choisi : {choice}")
-    print(f"resolution ecran : {resx,resy}")
+    if rank==0:
+        print(f"Pattern initial choisi : {choice}")
+        print(f"resolution ecran : {resx,resy}")
     try:
         init_pattern = dico_patterns[choice]
     except KeyError:
@@ -156,6 +156,7 @@ if __name__ == '__main__':
         grid = gr.Grille(*init_pattern)
         appli = gr.App((resx, resy), grid)
         first_iter=True
+        diff=[]
 
     else: 
 
@@ -176,28 +177,26 @@ if __name__ == '__main__':
         else:
             grid_loc = gr.Grille(*init_pattern)
 
-        first_iter=True
+        # Making time measurements
+
+        total_compute_time=0
+        number_iter=0
 
     mustContinue = True
 
     while mustContinue:
+
         #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
 
         if rank==0:
 
             if first_iter:
                 first_iter=False
-                continue
 
-            recv_counter=0
-            while recv_counter<nbp-1:
-                if nbp>2:
-                    [nx_loc, x_loc, diff]=globCom.recv(source=MPI.ANY_SOURCE)
-                    update_grid_column(grid, diff, nbp-1, nx_loc, x_loc)
-                else:
-                    diff=globCom.recv(source=1)
-                    update_grid_column(grid, diff)
-                recv_counter+=1
+            else:
+                diff_list=globCom.gather(diff, root=0)
+                for sub_diff in diff_list:
+                    gr.update_grid(grid, sub_diff)
 
             t2 = time.time()
             appli.draw()
@@ -205,7 +204,6 @@ if __name__ == '__main__':
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     globCom.Abort()
-            #print(f"Temps affichage : {t3-t2:2.2e} secondes", end='\r')
 
         else :
 
@@ -239,26 +237,23 @@ if __name__ == '__main__':
             # Computing the local grid next iteration 
         
             diff = grid_loc.compute_next_iteration() 
-        
+
+            t2=time.time()
+
             # Sending the results 
 
-            if nbp_calc>1:
+            globCom.gather(diff, root=0)
 
-                # Ensuring all the process have sent the results of the precedent iteration
+            # Perfoamance measurements 
 
-                if not first_iter:
-                    req.wait()
-                else:
-                    first_iter=False
-
-                req=globCom.isend([grid_loc.nx_loc, grid_loc.x_loc]+[diff.copy()], dest=0)
-                
-            else:
-                globCom.send(diff, dest=0)
-            t2 = time.time()
-            print(f"Temps calcul prochaine generation pour le rank {rank} : {t2-t1:2.2e} secondes",end="\r")
-
-        globCom.Bcast(np.array([0]), root=0)
+            total_compute_time+=t2-t1
+            number_iter+=1
+            if(number_iter%ITER_PRINT==0):
+                mean_iter_time=total_compute_time/number_iter
+                print(f"""Computing process of rank {rank_calc} computed {number_iter} iterations,""",
+                    f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
+                sys.stdout.flush()
+         
 
     if rank==0:
         pg.quit()
