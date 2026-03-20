@@ -1,27 +1,6 @@
 """
-Le jeu de la vie
-################
-Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
-de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
-    - un état vivant
-    - un état mort
-A l'initialisation, certaines cellules sont vivantes, d'autres mortes.
-Le principe du jeu est alors d'itérer de telle sorte qu'à chaque itération, une cellule va devoir interagir avec
-les huit cellules voisines (gauche, droite, bas, haut et les quatre en diagonales.) L'interaction se fait selon les
-règles suivantes pour calculer l'itération suivante :
-    - Une cellule vivante avec moins de deux cellules voisines vivantes meurt ( sous-population )
-    - Une cellule vivante avec deux ou trois cellules voisines vivantes reste vivante
-    - Une cellule vivante avec plus de trois cellules voisines vivantes meurt ( sur-population )
-    - Une cellule morte avec exactement trois cellules voisines vivantes devient vivante ( reproduction )
-
-Pour ce projet, on change légèrement les règles en transformant la grille infinie en un tore contenant un
-nombre fini de cellules. Les cellules les plus à gauche ont pour voisines les cellules les plus à droite
-et inversement, et de même les cellules les plus en haut ont pour voisines les cellules les plus en bas
-et inversement.
-
-On itère ensuite pour étudier la façon dont évolue la population des cellules sur la grille.
+Le jeu de la vie parallélisé selon des boîtes rectangulaires de tailles similaires.
 """
-
 
 import pygame as pg
 import numpy as np
@@ -29,6 +8,11 @@ import time
 import sys
 from mpi4py import MPI
 import game_of_life_2process as gr
+import game_of_life_nprocess_column as grc
+import game_of_life_nprocess_row as grr
+
+
+ITER_PRINT=500 # Printing performances every ITER_PRINT iterations
 
 class Grille_box:
     """
@@ -45,45 +29,38 @@ class Grille_box:
     def __init__(self, rank_row, nbp_row, rank_col, nbp_col, dim, init_pattern=None, 
                  color_life=pg.Color("black"), color_dead=pg.Color("white")):
         
+        if nbp<2:
+            raise ValueError("Can't use a Grid_Box object with nbp_row<2 or nbp_col<2!")
+        
+        # Defining the local dimensions of the grid and saving the corresponding
+        # begining column and row in the global grid.
 
         row_dim = dim[0]
-        reste_row = row_dim % nbp_row
-        # Nombre de lignes locales pour ce processus
-        ny_loc = row_dim // nbp_row + (1 if rank_row < reste_row else 0)
-        
-        # Calcul du décala pour savoir où on se trouve dans la grille globale
-        # C'est important pour reconstruire l'image plus tard
-        y_loc = sum(row_dim // nbp_row + (1 if r < reste_row else 0) for r in range(rank_row))
-        
-        #  Découpage selon les colonnes 
         col_dim = dim[1]
+        reste_row = row_dim % nbp_row
         reste_col = col_dim % nbp_col
+
+        ny_loc = row_dim // nbp_row + (1 if rank_row < reste_row else 0)
+        y_loc = ny_loc*rank_row + (reste_row if rank>=reste_row else 0)
+
         nx_loc = col_dim // nbp_col + (1 if rank_col < reste_col else 0)
-        
-        x_loc = sum(col_dim // nbp_col + (1 if c < reste_col else 0) for c in range(rank_col))
-        
-        # On garde ces infos pour les communications avec le processus d'affichage
+        x_loc = nx_loc*rank_col + (reste_col if rank>=reste_col else 0)
+
         self.ny_loc = ny_loc
         self.y_loc = y_loc
         self.nx_loc = nx_loc
         self.x_loc = x_loc
-        
-        # Dimensions avec cellules fantômes +2 pour les ghost cells
-        # Comme expliqué dans le Cours 4 page 13
+        self.nx_global=dim[1]
         self.dimensions = (ny_loc + 2, nx_loc + 2)
 
-        # Initialisation de la grille locale
-        self.cells = np.zeros(self.dimensions, dtype=np.uint8)
-        
+        # Initializing the grid
+
         if init_pattern is not None:
-            # On ne garde que les cellules du pattern qui sont dans notre domaine
-            # C'est le principe de la décomposition de domaine
-            for v in init_pattern:
-                i_global, j_global = v
-                if (y_loc <= i_global < y_loc + ny_loc) and (x_loc <= j_global < x_loc + nx_loc):
-                    i_loc = i_global - y_loc + 1  # +1 pour sauter la ligne fantôme
-                    j_loc = j_global - x_loc + 1  # +1 pour sauter la colonne fantôme
-                    self.cells[i_loc, j_loc] = 1
+            self.cells = np.zeros(self.dimensions, dtype=np.uint8)
+            indices_i = np.array([(v[0]-y_loc+1)%dim[0] for v in init_pattern])
+            indices_j = np.array([(v[1]-x_loc+1)%dim[1] for v in init_pattern])
+            mask = (indices_i< self.dimensions[0])*(indices_j<self.dimensions[1])
+            self.cells[indices_i[mask],indices_j[mask]] = 1 
         else:
             # Pattern aléatoire pour tester
             self.cells[1:-1, 1:-1] = np.random.randint(2, size=(ny_loc, nx_loc), dtype=np.uint8)
@@ -111,83 +88,35 @@ class Grille_box:
                 if self.cells[i,j] == 1: # Si la cellule est vivante
                     if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
                         next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
-                        diff_cells.append((i-1)*(nx-2)+j-1)
+                        diff_cells.append((self.y_loc+i-1)*self.nx_global+self.x_loc+j-1)
                     else:
                         next_cells[i,j] = 1 # Sinon elle reste vivante
                 elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
                     next_cells[i,j] = 1         # Naissance de la cellule
-                    diff_cells.append((i-1)*(nx-2)+j-1)
+                    diff_cells.append((self.y_loc+i-1)*self.nx_global+self.x_loc+j-1)
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
         return np.ascontiguousarray(diff_cells)
 
 
-
-
-def update_grid_2d(grid, y_loc, x_loc, diff, ny_loc, nx_loc):
-    for number in diff: 
-        i=number//nx_loc
-        j=number%nx_loc
-        grid.cells[y_loc+i,x_loc+j]=1-grid.cells[y_loc+i,x_loc+j]
-
-
 if __name__ == '__main__':
-    # Initialisation MPI
+    import time
+    import sys
+
+    from mpi4py import MPI
+
     globCom = MPI.COMM_WORLD.Dup()
-    nbp = globCom.size
-    rank = globCom.rank
+    nbp     = globCom.size
+    rank    = globCom.rank
+    name    = MPI.Get_processor_name()
 
-    if nbp < 2:
-        if rank == 0:
-            print("Il faut au moins 2 processus.")
-        sys.exit(1)
+    if nbp < 2: 
+        raise ValueError("Need at least 2 processes to parallelize the Game of Life!")
 
-    #  Organisation des processus 
-    #  on sépare explicitement rank 0 (affichage) des ranks 1..N-1 (calcul).
-    # Dans le code original, rank 0 était inclus dans la grille de calcul ce qui
-    # causait un deadlock parce-qu'il  calculait jamais mais était compté dans nbp_row/nbp_col.
-    n_calc = nbp - 1          # nombre de processus de calcul
-    calc_rank = rank - 1      # rang dans la grille de calcul (invalide pour rank 0)
-
-    # On essaie d'avoir une grille la plus carrée possible
-    nbp_row = int(np.sqrt(n_calc))
-    while n_calc % nbp_row != 0:
-        nbp_row -= 1
-    nbp_col = n_calc // nbp_row
-    
-    if rank == 0:
-        print("=" * 50)
-        print("JEU DE LA VIE - VERSION PARALLELE MPI")
-        print("=" * 50)
-        print(f"Grille de processus: {nbp_row} lignes x {nbp_col} colonnes")
-        print(f"Nombre total de processus: {nbp} (1 pour affichage, {n_calc} pour calcul)")
-        print("=" * 50)
-
-    # on calcule rank_row/rank_col uniquement pour les processus de calcul
-    if rank != 0:
-        rank_row = calc_rank // nbp_col
-        rank_col = calc_rank % nbp_col
-
-        # quand la grille n'était pas carrée (ex: 1x3, col_comm n'avait qu'1 seul processus).
-        # On utilise uniquement globCom avec les rangs globaux des 8 voisins.
-        # Le rang global d'un processus de calcul = son calc_rank + 1 (car rank 0 = affichage).
-        def grank(rr, rc):
-            """Rang global du processus de calcul à la position (rr, rc) dans la grille."""
-            return (rr % nbp_row) * nbp_col + (rc % nbp_col) + 1
-
-        up_g    = grank(rank_row - 1, rank_col)      # voisin haut
-        down_g  = grank(rank_row + 1, rank_col)      # voisin bas
-        left_g  = grank(rank_row,     rank_col - 1)  # voisin gauche
-        right_g = grank(rank_row,     rank_col + 1)  # voisin droite
-        ul_g    = grank(rank_row - 1, rank_col - 1)  # coin haut-gauche
-        ur_g    = grank(rank_row - 1, rank_col + 1)  # coin haut-droit
-        dl_g    = grank(rank_row + 1, rank_col - 1)  # coin bas-gauche
-        dr_g    = grank(rank_row + 1, rank_col + 1)  # coin bas-droit
-
-    if rank == 0:
+    if rank==0:
         pg.init()
-    
+
     dico_patterns = { # Dimension et pattern dans un tuple
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
         'toad'    : ((6,6),[(2,2),(2,3),(2,4),(3,3),(3,4),(3,5)]),
@@ -204,9 +133,6 @@ if __name__ == '__main__':
         "u" : ((200,200), [(101,101),(102,102),(103,102),(103,101),(104,103),(105,103),(105,102),(105,101),(105,105),(103,105),(102,105),(101,105),(101,104)]),
         "flat" : ((200,400), [(80,200),(81,200),(82,200),(83,200),(84,200),(85,200),(86,200),(87,200), (89,200),(90,200),(91,200),(92,200),(93,200),(97,200),(98,200),(99,200),(106,200),(107,200),(108,200),(109,200),(110,200),(111,200),(112,200),(114,200),(115,200),(116,200),(117,200),(118,200)])
     }
-    
-    # Récupération du choix depuis la ligne de commande
-    
     choice = 'glider'
     if len(sys.argv) > 1 :
         choice = sys.argv[1]
@@ -215,165 +141,253 @@ if __name__ == '__main__':
     if len(sys.argv) > 3 :
         resx = int(sys.argv[2])
         resy = int(sys.argv[3])
-    print(f"Pattern initial choisi : {choice}")
-    print(f"resolution ecran : {resx,resy}")
+    if rank==0:
+        print(f"Pattern initial choisi : {choice}")
+        print(f"resolution ecran : {resx,resy}")
     try:
         init_pattern = dico_patterns[choice]
     except KeyError:
         print("No such pattern. Available ones are:", dico_patterns.keys())
         exit(1)
     
+    if rank==0:
 
-    if rank == 0:
-        grid_global = gr.Grille(*init_pattern)
-        appli = gr.App((resx, resy), grid_global)
-    else:
-        grid_loc = Grille_box(rank_row, nbp_row, rank_col, nbp_col,*init_pattern)
+        # Spliting globCom
 
+        com_screen= globCom.Split(color=(rank!=0), key=rank)
+        nbp_screen=com_screen.size
+        rank_screen=com_screen.rank
 
-    mustContinue = True
-    iter_count = 0
+        # Creating the global grid
+
+        grid = gr.Grille(*init_pattern)
+        appli = gr.App((resx, resy), grid)
+        first_iter=True
+        diff=[]
+        
+
+    else: 
+
+        appli = None
+
+        # Spliting globCom
+
+        com_calc = globCom.Split(color=(rank!=0), key=rank)
+        nbp_calc=com_calc.size
+        rank_calc=com_calc.rank
+
+        # Writing nbp_calc as m*n with m>=1 and m<=n
+        # while trying to have m and n the closest possible. 
+
+        m=int(np.sqrt(nbp_calc))
+        while nbp_calc % m != 0:
+            m -= 1
+        n = nbp_calc // m
     
-    # mesures de performance
-    temps_calcul = 0.0
-    temps_comm = 0.0
-    debut_global = time.time()
+        # Putting more processes on the biggest global grid's axis
+
+        if init_pattern[0][0]>=init_pattern[0][1]:
+            np_on_rows=n
+            np_on_cols=m
+        else:
+            np_on_rows=m
+            np_on_cols=n
+
+        print(f"Grille de processus: {np_on_rows}  x {np_on_cols} ")
+
+        # Spliting computing processes along lines of the grid
+
+        com_row=com_calc.Split(color=rank_calc//np_on_cols, key=rank)
+        nbp_row=com_row.size
+        rank_row=com_row.rank
+
+        # Spliting computing processes along columns of the grid
+
+        com_col=com_calc.Split(color=rank_calc//np_on_rows, key=rank)
+        nbp_col=com_col.size
+        rank_col=com_col.rank
+        
+        # Creating the local grid
+
+        if nbp_row==1 and nbp_col==1:
+            grid_loc=gr.Grille(*init_pattern)
+        elif nbp_row==1:
+            grid_loc=grc.Grille_Column(rank_col, nbp_col, *init_pattern)
+        elif nbp_col==1:
+            grid_loc=grr.Grille_Row(rank_row, nbp_row, *init_pattern)
+        else:
+            grid_loc=Grille_box(rank_row, nbp_row, rank_col, nbp_col, *init_pattern)
+        # Getting row neighbours in com_row
+        
+        if nbp_row>1:
+            next_row_process=(rank_row+1)%nbp_row
+            before_row_process=(rank_row-1)%nbp_row
+
+        # Getting column neighbours in com_row
+
+        if nbp_col>1:
+            next_col_process=(rank_col+1)%nbp_col
+            before_col_process=(rank_col-1)%nbp_col
+
+        # Getting diagonal neighbours in com_calc
+
+        if nbp_row>1 and nbp_col>1:
+            low_left_process= before_row_process*nbp_col + before_col_process
+            low_right_process= before_row_process*nbp_col + next_col_process
+            up_left_process= next_row_process*nbp_col + before_col_process
+            up_right_process= next_row_process*nbp_col + next_col_process
+
+        # Making time measurements
+
+        total_compute_time=0
+        number_iter=0
+        
+    mustContinue = True
     
     while mustContinue:
+
         if rank == 0:
-            
+           
+        #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
 
-            # on affiched'abord l'état courant (permet de voir l'état initial
-            # dès le démarrage), puis on attend les mises à jour des workers
+            if first_iter:
+                first_iter=False
+
+            else:
+                diff_list=globCom.gather(diff, root=0)
+                for sub_diff in diff_list:
+                    gr.update_grid(grid, sub_diff)
+
+            t2 = time.time()
             appli.draw()
-            time.sleep(0.05)
-
+            t3 = time.time()
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     mustContinue = False
-                    #signal d'arrêt envoyé avec tag=99 dédié pour ne pas
-                    # interférer avec les messages de données (tag=50)
-                    for i in range(1, nbp):
-                        globCom.send(False, dest=i, tag=99)
-
-            if not mustContinue:
-                break
-
-            # Réception des sous-grilles de tous les processus de calcul
-            for n in range(n_calc):
-                data = globCom.recv(source=MPI.ANY_SOURCE, tag=50)
-                n, y_loc, x_loc, diff, ny_loc_r, nx_loc_r = data
-                update_grid_2d(grid_global, y_loc, x_loc, diff, ny_loc_r, nx_loc_r)
 
         else:
 
-            debut_comm = time.time()
+            t1 = time.time()
 
-            ny_loc = grid_loc.ny_loc
-            nx_loc = grid_loc.nx_loc
+            # Getting value for ghost lines 
+            # WARNING: the order of the Send and Recv is crucial in order to avoid blocking the program.
 
-            # échange des ghost cells via globCom uniquement (plus de row_comm/col_comm).
-            # La règle des tags est symétrique : si je reçois "du haut" avec tag=1,
-            # mon voisin du haut m'envoie avec tag=1 parce que pour lui je suis "son bas".
-            # Ainsi chaque paire est cohérente des deux côtés.
+            # General case
 
-            # Buffers de réception pour les ghost cells
-            buf_up    = np.empty(nx_loc, dtype=np.uint8)
-            buf_down  = np.empty(nx_loc, dtype=np.uint8)
-            buf_left  = np.empty(ny_loc, dtype=np.uint8)
-            buf_right = np.empty(ny_loc, dtype=np.uint8)
-            buf_ul    = np.empty(1, dtype=np.uint8)
-            buf_ur    = np.empty(1, dtype=np.uint8)
-            buf_dl    = np.empty(1, dtype=np.uint8)
-            buf_dr    = np.empty(1, dtype=np.uint8)
+            if nbp_row>1 and nbp_col>1:
 
-            # Données à envoyer : bords intérieurs de la sous-grille 
-            send_top    = np.ascontiguousarray(grid_loc.cells[1,  1:-1])   # ma 1ère ligne réelle
-            send_bottom = np.ascontiguousarray(grid_loc.cells[-2, 1:-1])  # ma dernière ligne réelle
-            send_left   = np.ascontiguousarray(grid_loc.cells[1:-1, 1])   # ma 1ère colonne réelle
-            send_right  = np.ascontiguousarray(grid_loc.cells[1:-1, -2])  # ma dernière colonne réelle
-            send_ul     = np.array([grid_loc.cells[1,   1]],  dtype=np.uint8)
-            send_ur     = np.array([grid_loc.cells[1,  -2]],  dtype=np.uint8)
-            send_dl     = np.array([grid_loc.cells[-2,  1]],  dtype=np.uint8)
-            send_dr     = np.array([grid_loc.cells[-2, -2]],  dtype=np.uint8)
+                # Making copies in order to avoid "BufferError: dlpack: buffer is not contiguous"
+                first_col_no_phantom = np.copy(grid_loc.cells[1:-1,1])
+                last_col_no_phantom = np.copy(grid_loc.cells[1:-1,-2])
+                phantom_col_before = np.empty(grid_loc.dimensions[0]-2, dtype=np.uint8)
+                phantom_col_next = np.empty(grid_loc.dimensions[0]-2, dtype=np.uint8)
 
-            # Lancer toutes les réceptions et envois non-bloquants en une seule liste
-            # tag=1 : "ligne venant du haut"   tag=2 : "ligne venant du bas"
-            # tag=3 : "col venant de gauche"   tag=4 : "col venant de droite"
-            # tag=5..8 : coins (ul, ur, dl, dr)
-            reqs = [
-                globCom.Irecv(buf_up,    source=up_g,    tag=1),
-                globCom.Irecv(buf_down,  source=down_g,  tag=2),
-                globCom.Irecv(buf_left,  source=left_g,  tag=3),
-                globCom.Irecv(buf_right, source=right_g, tag=4),
-                globCom.Irecv(buf_ul,    source=ul_g,    tag=5),
-                globCom.Irecv(buf_ur,    source=ur_g,    tag=6),
-                globCom.Irecv(buf_dl,    source=dl_g,    tag=7),
-                globCom.Irecv(buf_dr,    source=dr_g,    tag=8),
-                # Mon voisin du haut reçoit ma ligne du haut avec tag=2 (je suis son bas)
-                globCom.Isend(send_top,    dest=up_g,    tag=2),
-                globCom.Isend(send_bottom, dest=down_g,  tag=1),
-                globCom.Isend(send_left,   dest=left_g,  tag=4),
-                globCom.Isend(send_right,  dest=right_g, tag=3),
-                globCom.Isend(send_ul,     dest=ul_g,    tag=8),
-                globCom.Isend(send_ur,     dest=ur_g,    tag=7),
-                globCom.Isend(send_dl,     dest=dl_g,    tag=6),
-                globCom.Isend(send_dr,     dest=dr_g,    tag=5),
-            ]
-            MPI.Request.Waitall(reqs)
+                if rank_row%2==0:
+                    # Ghost rows
+                    com_row.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
+                    com_row.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
+                    com_row.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
+                    com_row.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
 
-            # Copier les données reçues dans les ghost cells
-            grid_loc.cells[0,  1:-1] = buf_up      # ghost haut
-            grid_loc.cells[-1, 1:-1] = buf_down    # ghost bas
-            grid_loc.cells[1:-1, 0]  = buf_left    # ghost gauche
-            grid_loc.cells[1:-1, -1] = buf_right   # ghost droite
-            grid_loc.cells[0,  0]    = buf_ul[0]   # coin haut-gauche
-            grid_loc.cells[0,  -1]   = buf_ur[0]   # coin haut-droit
-            grid_loc.cells[-1, 0]    = buf_dl[0]   # coin bas-gauche
-            grid_loc.cells[-1, -1]   = buf_dr[0]   # coin bas-droit
+                    # Ghost rows
+                    com_col.Send(first_col_no_phantom, dest=before_col_process)
+                    com_col.Recv(phantom_col_next, source=next_col_process)
+                    com_col.Send(last_col_no_phantom, dest=next_col_process)
+                    com_col.Recv(phantom_col_before, source=before_col_process)
 
-            temps_comm += time.time() - debut_comm
+                    # Ghost vertexes
+                    com_calc.Send(grid_loc.cells[0,0], dest=low_left_process)
+                    com_calc.Recv(grid_loc.cells[-1,-1], source=up_right_process)
+                    com_calc.Send(grid_loc.cells[0,-1], dest=low_right_process)
+                    com_calc.Recv(grid_loc.cells[-1,0], source=up_left_process)
+                    com_calc.Send(grid_loc.cells[-1,0], dest=up_left_process)
+                    com_calc.Recv(grid_loc.cells[0,-1], source=low_right_process)
+                    com_calc.Send(grid_loc.cells[-1,-1], dest=up_right_process)
+                    com_calc.Recv(grid_loc.cells[0,0], source=low_left_process) 
 
-            # Calcul de la prochaine génération 
-            debut_calcul = time.time()
-            diff = grid_loc.compute_next_iteration()
-            temps_calcul += time.time() - debut_calcul
-
-            # Envoi de la sous-grille complète au processus 0
-            # on envoie aussi ny_loc pour que update_grid_2d puisse
-            # reconstruire correctement la zone dans la grille globale
-            globCom.send([rank, grid_loc.y_loc, grid_loc.x_loc, diff,
-                          grid_loc.ny_loc, grid_loc.nx_loc], dest=0, tag=50)
-
-            iter_count += 1
+                else:
+                    # Ghost rows
+                    com_row.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
+                    com_row.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
+                    com_row.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
+                    com_row.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
             
-            # Affichage des perfs toutes les 100 itérations
-            if iter_count % 100 == 0 and rank == 1:
-                print(f"\n[Perf] Itération {iter_count}:")
-                print(f"       Temps calcul: {temps_calcul/iter_count*1000:.2f} ms/it")
-                print(f"       Temps comm: {temps_comm/iter_count*1000:.2f} ms/it")
-                print(f"       Ratio comm/calcul: {temps_comm/temps_calcul:.2f}")
+                    # Ghost columns
+                    com_col.Recv(phantom_col_next, source=next_col_process)
+                    com_col.Send(first_col_no_phantom, dest=before_col_process)
+                    com_col.Recv(phantom_col_before, source=before_col_process)
+                    com_col.Send(last_col_no_phantom, dest=next_col_process)
 
-            # MODIF: tag=99 dédié pour le signal d'arrêt afin de ne pas
-            # confondre avec les messages de données 
-            if globCom.Iprobe(source=0, tag=99):
-                mustContinue = globCom.recv(source=0, tag=99)
+                    # Ghost vertexes
+                    com_calc.Recv(grid_loc.cells[-1,-1], source=up_right_process)
+                    com_calc.Send(grid_loc.cells[0,0], dest=low_left_process)
+                    com_calc.Recv(grid_loc.cells[-1,0], source=up_left_process)
+                    com_calc.Send(grid_loc.cells[0,-1], dest=low_right_process)
+                    com_calc.Recv(grid_loc.cells[0,-1], source=low_right_process)
+                    com_calc.Send(grid_loc.cells[-1,0], dest=up_left_process)
+                    com_calc.Recv(grid_loc.cells[0,0], source=low_left_process)
+                    com_calc.Send(grid_loc.cells[-1,-1], dest=up_right_process)
 
-    if rank == 0:
-        pg.quit()
-        print("\n" + "=" * 50)
-        print("RÉSUMÉ DES PERFORMANCES")
-        print("=" * 50)
-        print(f"Nombre de processus de calcul: {n_calc}")
-        print(f"Grille de processus: {nbp_row}x{nbp_col}")
-        print(f"Dimensions globales: {init_pattern[0][0]}x{init_pattern[0][1]}")
-        print("=" * 50)
+                grid_loc.cells[1:-1,0] = phantom_col_before
+                grid_loc.cells[1:-1,-1] = phantom_col_next    
+
+            # Case that decays to parallelizing only thrhough rows
+
+            elif nbp_col==1:
+                if nbp_row%2==0:
+                    com_row.Send(grid_loc.cells[1,:], dest=before_row_process)
+                    com_row.Recv(grid_loc.cells[-1,:], source=next_row_process)
+                    com_row.Send(grid_loc.cells[-2,:], dest=next_row_process)
+                    com_row.Recv(grid_loc.cells[0,:], source=before_row_process)
+                else:
+                    com_row.Recv(grid_loc.cells[-1,:], source=next_row_process)
+                    com_row.Send(grid_loc.cells[1,:], dest=before_row_process)
+                    com_row.Recv(grid_loc.cells[0,:], source=before_row_process)
+                    com_row.Send(grid_loc.cells[-2,:], dest=next_row_process)
+
+            # Case that decays to parallelizing only thrhough columns
+
+            else:
+                first_no_phantom = np.copy(grid_loc.cells[:,1])
+                last_no_phantom = np.copy(grid_loc.cells[:,-2])
+                phantom_before = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
+                phantom_next = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
+
+                if rank_calc%2==0:
+                    com_col.Send(first_no_phantom, dest=before_col_process)
+                    com_col.Recv(phantom_next, source=next_col_process)
+                    com_col.Send(last_no_phantom, dest=next_col_process)
+                    com_col.Recv(phantom_before, source=before_col_process)
+                else:
+                    com_col.Recv(phantom_next, source=next_col_process)
+                    com_col.Send(first_no_phantom, dest=before_col_process)
+                    com_col.Recv(phantom_before, source=before_col_process)
+                    com_col.Send(last_no_phantom, dest=next_col_process)
+
+                grid_loc.cells[:,0] = phantom_before
+                grid_loc.cells[:,-1] = phantom_next
+          
+
+            # Computing the local grid next iteration 
+        
+            diff = grid_loc.compute_next_iteration() 
     
-    elif rank == 1:
-        temps_total = time.time() - debut_global
-        print(f"\n[Rank {rank}] Temps total: {temps_total:.2f} s")
-        print(f"[Rank {rank}] Itérations: {iter_count}")
-        if iter_count > 0:
-            print(f"[Rank {rank}] Temps moyen par itération: {temps_total/iter_count*1000:.2f} ms")
-            print(f"[Rank {rank}] Dont calcul: {temps_calcul/iter_count*1000:.2f} ms ({temps_calcul/temps_total*100:.1f}%)")
-            print(f"[Rank {rank}] Dont comm: {temps_comm/iter_count*1000:.2f} ms ({temps_comm/temps_total*100:.1f}%)")
+            t2=time.time()
+
+           # Sending the results 
+
+            globCom.gather(diff, root=0)   
+
+            # Perfoamance measurements 
+
+            total_compute_time+=t2-t1
+            number_iter+=1
+            if(number_iter%500==0):
+                mean_iter_time=total_compute_time/number_iter
+                print(f"""Computing process of rank {rank_calc} computed {number_iter} iterations,""",
+                    f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
+                sys.stdout.flush()
+      
+    if rank==0:
+        pg.quit()
+        globCom.Abort()

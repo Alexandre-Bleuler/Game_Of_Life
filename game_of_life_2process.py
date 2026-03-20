@@ -110,6 +110,18 @@ class App:
 
 
 def update_grid(grid, diff):
+    """
+    Updating the glbal grid accordingly to computations for the next
+    iteration of the game
+
+    Args:
+        grid: the global grid
+        diff: a list containing the index of the cells to update in the 
+        style defined by grid.compute_next_iteration()
+
+    Return:
+        None
+    """
     for number in diff: 
         i=number//grid.dimensions[1]
         j=number%grid.dimensions[1]
@@ -186,7 +198,7 @@ if __name__ == '__main__':
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     globCom.Abort()
-            #print(f"Temps affichage : {t3-t2:2.2e} secondes", end='\r')
+            print(f"Temps affichage : {t3-t2:2.2e} secondes", end='\r')
 
     if rank==0:
         pg.quit()
