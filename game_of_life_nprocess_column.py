@@ -31,9 +31,9 @@ class Grille_Column:
         # Defining the local dimensions of the grid and saving the corresponding
         # begining column and row in the global grid.
 
-        column_dim=dim[1]
-        reste = column_dim%nbp
-        nx_loc = column_dim//nbp + (1 if rank<reste else 0) 
+        x_dim=dim[1]
+        reste = x_dim%nbp
+        nx_loc = x_dim//nbp + (1 if rank<reste else 0) 
         x_loc = nx_loc*rank + (reste if rank>=reste else 0)
 
         self.nx_loc = nx_loc
@@ -244,7 +244,7 @@ if __name__ == '__main__':
 
             globCom.gather(diff, root=0)
 
-            # Perfoamance measurements 
+            # Performance measurements 
 
             total_compute_time+=t2-t1
             number_iter+=1

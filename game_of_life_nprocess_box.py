@@ -35,16 +35,16 @@ class Grille_box:
         # Defining the local dimensions of the grid and saving the corresponding
         # begining column and row in the global grid.
 
-        row_dim = dim[0]
-        col_dim = dim[1]
-        reste_row = row_dim % nbp_row
-        reste_col = col_dim % nbp_col
+        y_dim = dim[0]
+        x_dim = dim[1]
+        reste_y = y_dim % nbp_row
+        reste_x = x_dim % nbp_col
 
-        ny_loc = row_dim // nbp_row + (1 if rank_row < reste_row else 0)
-        y_loc = ny_loc*rank_row + (reste_row if rank>=reste_row else 0)
+        ny_loc = y_dim // nbp_row + (1 if rank_row < reste_y else 0)
+        y_loc = ny_loc*rank_row + (reste_y if rank_row>=reste_y else 0)
 
-        nx_loc = col_dim // nbp_col + (1 if rank_col < reste_col else 0)
-        x_loc = nx_loc*rank_col + (reste_col if rank>=reste_col else 0)
+        nx_loc = x_dim // nbp_col + (1 if rank_col < reste_x else 0)
+        x_loc = nx_loc*rank_col + (reste_x if rank_col>=reste_x else 0)
 
         self.ny_loc = ny_loc
         self.y_loc = y_loc
@@ -52,7 +52,7 @@ class Grille_box:
         self.x_loc = x_loc
         self.nx_global=dim[1]
         self.dimensions = (ny_loc + 2, nx_loc + 2)
-
+        
         # Initializing the grid
 
         if init_pattern is not None:
@@ -203,7 +203,7 @@ if __name__ == '__main__':
 
         # Spliting computing processes along columns of the grid
 
-        com_col=com_calc.Split(color=rank_calc//np_on_rows, key=rank)
+        com_col=com_calc.Split(color=rank_row, key=rank)
         nbp_col=com_col.size
         rank_col=com_col.rank
         
@@ -217,6 +217,7 @@ if __name__ == '__main__':
             grid_loc=grr.Grille_Row(rank_row, nbp_row, *init_pattern)
         else:
             grid_loc=Grille_box(rank_row, nbp_row, rank_col, nbp_col, *init_pattern)
+
         # Getting row neighbours in com_row
         
         if nbp_row>1:
@@ -252,7 +253,7 @@ if __name__ == '__main__':
 
             if first_iter:
                 first_iter=False
-
+      
             else:
                 diff_list=globCom.gather(diff, root=0)
                 for sub_diff in diff_list:
@@ -281,57 +282,69 @@ if __name__ == '__main__':
                 last_col_no_phantom = np.copy(grid_loc.cells[1:-1,-2])
                 phantom_col_before = np.empty(grid_loc.dimensions[0]-2, dtype=np.uint8)
                 phantom_col_next = np.empty(grid_loc.dimensions[0]-2, dtype=np.uint8)
+                low_left_buffer=np.empty(1, dtype=np.uint8)
+                low_right_buffer=np.empty(1, dtype=np.uint8)
+                up_left_buffer=np.empty(1, dtype=np.uint8)
+                up_right_buffer=np.empty(1, dtype=np.uint8)
+
+                # Ghost rows
 
                 if rank_row%2==0:
-                    # Ghost rows
                     com_row.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
                     com_row.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
                     com_row.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
                     com_row.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
 
-                    # Ghost rows
-                    com_col.Send(first_col_no_phantom, dest=before_col_process)
-                    com_col.Recv(phantom_col_next, source=next_col_process)
-                    com_col.Send(last_col_no_phantom, dest=next_col_process)
-                    com_col.Recv(phantom_col_before, source=before_col_process)
-
-                    # Ghost vertexes
-                    com_calc.Send(grid_loc.cells[0,0], dest=low_left_process)
-                    com_calc.Recv(grid_loc.cells[-1,-1], source=up_right_process)
-                    com_calc.Send(grid_loc.cells[0,-1], dest=low_right_process)
-                    com_calc.Recv(grid_loc.cells[-1,0], source=up_left_process)
-                    com_calc.Send(grid_loc.cells[-1,0], dest=up_left_process)
-                    com_calc.Recv(grid_loc.cells[0,-1], source=low_right_process)
-                    com_calc.Send(grid_loc.cells[-1,-1], dest=up_right_process)
-                    com_calc.Recv(grid_loc.cells[0,0], source=low_left_process) 
-
                 else:
-                    # Ghost rows
                     com_row.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
                     com_row.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
                     com_row.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
                     com_row.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
             
-                    # Ghost columns
+                # Ghost columns
+
+                if rank_col%2==0:
+                    com_col.Send(first_col_no_phantom, dest=before_col_process)
+                    com_col.Recv(phantom_col_next, source=next_col_process)
+                    com_col.Send(last_col_no_phantom, dest=next_col_process)
+                    com_col.Recv(phantom_col_before, source=before_col_process)
+
+                else:
                     com_col.Recv(phantom_col_next, source=next_col_process)
                     com_col.Send(first_col_no_phantom, dest=before_col_process)
                     com_col.Recv(phantom_col_before, source=before_col_process)
                     com_col.Send(last_col_no_phantom, dest=next_col_process)
 
-                    # Ghost vertexes
-                    com_calc.Recv(grid_loc.cells[-1,-1], source=up_right_process)
-                    com_calc.Send(grid_loc.cells[0,0], dest=low_left_process)
-                    com_calc.Recv(grid_loc.cells[-1,0], source=up_left_process)
-                    com_calc.Send(grid_loc.cells[0,-1], dest=low_right_process)
-                    com_calc.Recv(grid_loc.cells[0,-1], source=low_right_process)
-                    com_calc.Send(grid_loc.cells[-1,0], dest=up_left_process)
-                    com_calc.Recv(grid_loc.cells[0,0], source=low_left_process)
-                    com_calc.Send(grid_loc.cells[-1,-1], dest=up_right_process)
+                # Ghost vertexes
 
-                grid_loc.cells[1:-1,0] = phantom_col_before
-                grid_loc.cells[1:-1,-1] = phantom_col_next    
+                if rank_col%2==0:
+                    com_calc.Send(np.array(grid_loc.cells[0,0], dtype=np.uint8), dest=low_left_process)
+                    com_calc.Recv(up_right_buffer, source=up_right_process)
+                    com_calc.Send(np.array(grid_loc.cells[0,-1], dtype=np.uint8), dest=low_right_process)
+                    com_calc.Recv(up_left_buffer, source=up_left_process)
+                    com_calc.Send(np.array(grid_loc.cells[-1,0], dtype=np.uint8), dest=up_left_process)
+                    com_calc.Recv(low_right_buffer, source=low_right_process)
+                    com_calc.Send(np.array(grid_loc.cells[-1,-1], dtype=np.uint8), dest=up_right_process)
+                    com_calc.Recv(low_left_buffer, source=low_left_process) 
 
-            # Case that decays to parallelizing only thrhough rows
+                else:   
+                    com_calc.Recv(up_right_buffer, source=up_right_process)
+                    com_calc.Send(np.array(grid_loc.cells[0,0], dtype=np.uint8), dest=low_left_process)
+                    com_calc.Recv(up_left_buffer, source=up_left_process)
+                    com_calc.Send(np.array(grid_loc.cells[0,-1], dtype=np.uint8), dest=low_right_process)
+                    com_calc.Recv(low_right_buffer, source=low_right_process)
+                    com_calc.Send(np.array(grid_loc.cells[-1,0], dtype=np.uint8), dest=up_left_process)
+                    com_calc.Recv(low_left_buffer, source=low_left_process)
+                    com_calc.Send(np.array(grid_loc.cells[-1,-1], dtype=np.uint8), dest=up_right_process)
+
+                grid_loc.cells[1:-1,0]=phantom_col_before
+                grid_loc.cells[1:-1,-1]=phantom_col_next    
+                grid_loc.cells[0,0]=low_left_buffer[0]
+                grid_loc.cells[0,-1]=low_right_buffer[0]
+                grid_loc.cells[-1,0]=up_left_buffer[0]
+                grid_loc.cells[-1,-1]=up_right_buffer[0]
+                
+            # Case that decays to parallelizing only through rows
 
             elif nbp_col==1:
                 if nbp_row%2==0:
@@ -369,16 +382,16 @@ if __name__ == '__main__':
           
 
             # Computing the local grid next iteration 
-        
+            
             diff = grid_loc.compute_next_iteration() 
     
             t2=time.time()
 
            # Sending the results 
-
+            
             globCom.gather(diff, root=0)   
 
-            # Perfoamance measurements 
+            # Performance measurements 
 
             total_compute_time+=t2-t1
             number_iter+=1
@@ -387,7 +400,7 @@ if __name__ == '__main__':
                 print(f"""Computing process of rank {rank_calc} computed {number_iter} iterations,""",
                     f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
                 sys.stdout.flush()
-      
+            
     if rank==0:
         pg.quit()
         globCom.Abort()
