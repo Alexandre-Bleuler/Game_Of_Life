@@ -14,7 +14,7 @@ import game_of_life_nprocess_row as grr
 
 ITER_PRINT=500 # Printing performances every ITER_PRINT iterations
 
-class Grille_box:
+class Grille_Box:
     """
     Grille torique décrivant l'automate cellulaire avec découpage 2D.
     
@@ -26,25 +26,22 @@ class Grille_box:
         - cells[:, 0] et cells[:, -1] : colonnes fantômes (gauche et droite)
         - cells[1:-1, 1:-1] : cellules internes (celles qu'on calcule vraiment)
     """
-    def __init__(self, rank_row, nbp_row, rank_col, nbp_col, dim, init_pattern=None, 
+    def __init__(self, index_row, nb_on_col, index_col, nb_on_row, dim, init_pattern=None, 
                  color_life=pg.Color("black"), color_dead=pg.Color("white")):
-        
-        if nbp<2:
-            raise ValueError("Can't use a Grid_Box object with nbp_row<2 or nbp_col<2!")
         
         # Defining the local dimensions of the grid and saving the corresponding
         # begining column and row in the global grid.
 
         y_dim = dim[0]
         x_dim = dim[1]
-        reste_y = y_dim % nbp_row
-        reste_x = x_dim % nbp_col
+        reste_y = y_dim %  nb_on_col
+        reste_x = x_dim % nb_on_row
 
-        ny_loc = y_dim // nbp_row + (1 if rank_row < reste_y else 0)
-        y_loc = ny_loc*rank_row + (reste_y if rank_row>=reste_y else 0)
+        ny_loc = y_dim//nb_on_col + (1 if index_row< reste_y else 0)
+        y_loc = ny_loc*index_row + (reste_y if index_row>=reste_y else 0)
 
-        nx_loc = x_dim // nbp_col + (1 if rank_col < reste_x else 0)
-        x_loc = nx_loc*rank_col + (reste_x if rank_col>=reste_x else 0)
+        nx_loc = x_dim//nb_on_row + (1 if index_col < reste_x else 0)
+        x_loc = nx_loc*index_col + (reste_x if index_col>=reste_x else 0)
 
         self.ny_loc = ny_loc
         self.y_loc = y_loc
@@ -97,7 +94,7 @@ class Grille_box:
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
-        return np.ascontiguousarray(diff_cells)
+        return diff_cells
 
 
 if __name__ == '__main__':
@@ -187,62 +184,62 @@ if __name__ == '__main__':
         # Putting more processes on the biggest global grid's axis
 
         if init_pattern[0][0]>=init_pattern[0][1]:
-            np_on_rows=n
-            np_on_cols=m
-        else:
             np_on_rows=m
             np_on_cols=n
+        else:
+            np_on_rows=n
+            np_on_cols=m
 
-        print(f"Grille de processus: {np_on_rows}  x {np_on_cols} ")
+        print(f"Grille de processus: {np_on_cols}  x {np_on_rows} ")
 
         # Spliting computing processes along lines of the grid
 
-        com_row=com_calc.Split(color=rank_calc//np_on_cols, key=rank)
-        nbp_row=com_row.size
-        rank_row=com_row.rank
+        com_on_row=com_calc.Split(color=rank_calc//np_on_rows, key=rank)
+        nb_on_row=com_on_row.size # Number of process on a line
+        index_col=com_on_row.rank # Index of the process' column
 
         # Spliting computing processes along columns of the grid
 
-        com_col=com_calc.Split(color=rank_row, key=rank)
-        nbp_col=com_col.size
-        rank_col=com_col.rank
+        com_on_col=com_calc.Split(color=index_col, key=rank)
+        nb_on_col=com_on_col.size # Number of process on a column
+        index_row=com_on_col.rank # Index of the process' row
         
         # Creating the local grid
 
-        if nbp_row==1 and nbp_col==1:
+        if nb_on_row==1 and nb_on_col==1:
             grid_loc=gr.Grille(*init_pattern)
-        elif nbp_row==1:
-            grid_loc=grc.Grille_Column(rank_col, nbp_col, *init_pattern)
-        elif nbp_col==1:
-            grid_loc=grr.Grille_Row(rank_row, nbp_row, *init_pattern)
+        elif nb_on_col==1:
+            grid_loc=grc.Grille_Column(index_col,  nb_on_row, *init_pattern)
+        elif nb_on_row==1:
+            grid_loc=grr.Grille_Row(index_row,  nb_on_col, *init_pattern)
         else:
-            grid_loc=Grille_box(rank_row, nbp_row, rank_col, nbp_col, *init_pattern)
+            grid_loc=Grille_Box(index_row,  nb_on_col, index_col, nb_on_row, *init_pattern)
 
         # Getting row neighbours in com_row
         
-        if nbp_row>1:
-            next_row_process=(rank_row+1)%nbp_row
-            before_row_process=(rank_row-1)%nbp_row
+        if nb_on_row>1:
+            next_col_process=(index_col+1)%nb_on_row
+            before_col_process=(index_col-1)%nb_on_row
 
         # Getting column neighbours in com_row
 
-        if nbp_col>1:
-            next_col_process=(rank_col+1)%nbp_col
-            before_col_process=(rank_col-1)%nbp_col
+        if nb_on_col>1:
+            next_row_process=(index_row+1)%nb_on_col
+            before_row_process=(index_row-1)%nb_on_col
 
         # Getting diagonal neighbours in com_calc
 
-        if nbp_row>1 and nbp_col>1:
-            low_left_process= before_row_process*nbp_col + before_col_process
-            low_right_process= before_row_process*nbp_col + next_col_process
-            up_left_process= next_row_process*nbp_col + before_col_process
-            up_right_process= next_row_process*nbp_col + next_col_process
+        if nb_on_row>1 and nb_on_col>1:
+            low_left_process=before_row_process*nb_on_row + before_col_process
+            low_right_process=before_row_process*nb_on_row + next_col_process
+            up_left_process=next_row_process*nb_on_row + before_col_process
+            up_right_process=next_row_process*nb_on_row + next_col_process
 
         # Making time measurements
 
         total_compute_time=0
         number_iter=0
-        
+       
     mustContinue = True
     
     while mustContinue:
@@ -275,7 +272,7 @@ if __name__ == '__main__':
 
             # General case
 
-            if nbp_row>1 and nbp_col>1:
+            if nb_on_row>1 and nb_on_col>1:
 
                 # Making copies in order to avoid "BufferError: dlpack: buffer is not contiguous"
                 first_col_no_phantom = np.copy(grid_loc.cells[1:-1,1])
@@ -289,35 +286,28 @@ if __name__ == '__main__':
 
                 # Ghost rows
 
-                if rank_row%2==0:
-                    com_row.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
-                    com_row.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
-                    com_row.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
-                    com_row.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
+                if index_row%2==0:
+                    com_on_col.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
+                    com_on_col.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
+                    com_on_col.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
+                    com_on_col.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
 
                 else:
-                    com_row.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
-                    com_row.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
-                    com_row.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
-                    com_row.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
+                    com_on_col.Recv(grid_loc.cells[-1,1:-1], source=next_row_process)
+                    com_on_col.Send(grid_loc.cells[1,1:-1], dest=before_row_process)
+                    com_on_col.Recv(grid_loc.cells[0,1:-1], source=before_row_process)
+                    com_on_col.Send(grid_loc.cells[-2,1:-1], dest=next_row_process)
             
-                # Ghost columns
+                # Ghost columns and vertexes
 
-                if rank_col%2==0:
-                    com_col.Send(first_col_no_phantom, dest=before_col_process)
-                    com_col.Recv(phantom_col_next, source=next_col_process)
-                    com_col.Send(last_col_no_phantom, dest=next_col_process)
-                    com_col.Recv(phantom_col_before, source=before_col_process)
+                if index_col%2==0:
+                    # Columns 
+                    com_on_row.Send(first_col_no_phantom, dest=before_col_process)
+                    com_on_row.Recv(phantom_col_next, source=next_col_process)
+                    com_on_row.Send(last_col_no_phantom, dest=next_col_process)
+                    com_on_row.Recv(phantom_col_before, source=before_col_process)
 
-                else:
-                    com_col.Recv(phantom_col_next, source=next_col_process)
-                    com_col.Send(first_col_no_phantom, dest=before_col_process)
-                    com_col.Recv(phantom_col_before, source=before_col_process)
-                    com_col.Send(last_col_no_phantom, dest=next_col_process)
-
-                # Ghost vertexes
-
-                if rank_col%2==0:
+                    # Vertexes
                     com_calc.Send(np.array(grid_loc.cells[0,0], dtype=np.uint8), dest=low_left_process)
                     com_calc.Recv(up_right_buffer, source=up_right_process)
                     com_calc.Send(np.array(grid_loc.cells[0,-1], dtype=np.uint8), dest=low_right_process)
@@ -327,7 +317,14 @@ if __name__ == '__main__':
                     com_calc.Send(np.array(grid_loc.cells[-1,-1], dtype=np.uint8), dest=up_right_process)
                     com_calc.Recv(low_left_buffer, source=low_left_process) 
 
-                else:   
+                else:
+                    # Columns
+                    com_on_row.Recv(phantom_col_next, source=next_col_process)
+                    com_on_row.Send(first_col_no_phantom, dest=before_col_process)
+                    com_on_row.Recv(phantom_col_before, source=before_col_process)
+                    com_on_row.Send(last_col_no_phantom, dest=next_col_process)
+
+                    # Vertexes 
                     com_calc.Recv(up_right_buffer, source=up_right_process)
                     com_calc.Send(np.array(grid_loc.cells[0,0], dtype=np.uint8), dest=low_left_process)
                     com_calc.Recv(up_left_buffer, source=up_left_process)
@@ -338,7 +335,7 @@ if __name__ == '__main__':
                     com_calc.Send(np.array(grid_loc.cells[-1,-1], dtype=np.uint8), dest=up_right_process)
 
                 grid_loc.cells[1:-1,0]=phantom_col_before
-                grid_loc.cells[1:-1,-1]=phantom_col_next    
+                grid_loc.cells[1:-1,-1]=phantom_col_next 
                 grid_loc.cells[0,0]=low_left_buffer[0]
                 grid_loc.cells[0,-1]=low_right_buffer[0]
                 grid_loc.cells[-1,0]=up_left_buffer[0]
@@ -346,36 +343,36 @@ if __name__ == '__main__':
                 
             # Case that decays to parallelizing only through rows
 
-            elif nbp_col==1:
-                if nbp_row%2==0:
-                    com_row.Send(grid_loc.cells[1,:], dest=before_row_process)
-                    com_row.Recv(grid_loc.cells[-1,:], source=next_row_process)
-                    com_row.Send(grid_loc.cells[-2,:], dest=next_row_process)
-                    com_row.Recv(grid_loc.cells[0,:], source=before_row_process)
+            elif nb_on_row==1 and nb_on_col>1:
+                if index_row%2==0:
+                    com_on_col.Send(grid_loc.cells[1,:], dest=before_row_process)
+                    com_on_col.Recv(grid_loc.cells[-1,:], source=next_row_process)
+                    com_on_col.Send(grid_loc.cells[-2,:], dest=next_row_process)
+                    com_on_col.Recv(grid_loc.cells[0,:], source=before_row_process)
                 else:
-                    com_row.Recv(grid_loc.cells[-1,:], source=next_row_process)
-                    com_row.Send(grid_loc.cells[1,:], dest=before_row_process)
-                    com_row.Recv(grid_loc.cells[0,:], source=before_row_process)
-                    com_row.Send(grid_loc.cells[-2,:], dest=next_row_process)
+                    com_on_col.Recv(grid_loc.cells[-1,:], source=next_row_process)
+                    com_on_col.Send(grid_loc.cells[1,:], dest=before_row_process)
+                    com_on_col.Recv(grid_loc.cells[0,:], source=before_row_process)
+                    com_on_col.Send(grid_loc.cells[-2,:], dest=next_row_process)
 
-            # Case that decays to parallelizing only thrhough columns
+            # Case that decays to parallelizing only through columns
 
-            else:
+            elif nb_on_col==1 and nb_on_row>1:
                 first_no_phantom = np.copy(grid_loc.cells[:,1])
                 last_no_phantom = np.copy(grid_loc.cells[:,-2])
                 phantom_before = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
                 phantom_next = np.empty(grid_loc.dimensions[0], dtype=np.uint8)
 
-                if rank_calc%2==0:
-                    com_col.Send(first_no_phantom, dest=before_col_process)
-                    com_col.Recv(phantom_next, source=next_col_process)
-                    com_col.Send(last_no_phantom, dest=next_col_process)
-                    com_col.Recv(phantom_before, source=before_col_process)
+                if index_col%2==0:
+                    com_on_row.Send(first_no_phantom, dest=before_col_process)
+                    com_on_row.Recv(phantom_next, source=next_col_process)
+                    com_on_row.Send(last_no_phantom, dest=next_col_process)
+                    com_on_row.Recv(phantom_before, source=before_col_process)
                 else:
-                    com_col.Recv(phantom_next, source=next_col_process)
-                    com_col.Send(first_no_phantom, dest=before_col_process)
-                    com_col.Recv(phantom_before, source=before_col_process)
-                    com_col.Send(last_no_phantom, dest=next_col_process)
+                    com_on_row.Recv(phantom_next, source=next_col_process)
+                    com_on_row.Send(first_no_phantom, dest=before_col_process)
+                    com_on_row.Recv(phantom_before, source=before_col_process)
+                    com_on_row.Send(last_no_phantom, dest=next_col_process)
 
                 grid_loc.cells[:,0] = phantom_before
                 grid_loc.cells[:,-1] = phantom_next
@@ -397,7 +394,8 @@ if __name__ == '__main__':
             number_iter+=1
             if(number_iter%500==0):
                 mean_iter_time=total_compute_time/number_iter
-                print(f"""Computing process of rank {rank_calc} computed {number_iter} iterations,""",
+                print(f"""Computing process of rank {rank_calc} (row: {index_row}, column:{index_col})""",
+                    f"""computed {number_iter} iterations,""",
                     f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
                 sys.stdout.flush()
             
