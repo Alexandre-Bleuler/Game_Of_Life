@@ -26,7 +26,7 @@ class Grille_Row:
     def __init__(self, rank, nbp, dim, init_pattern=None, color_life=pg.Color("black"), color_dead=pg.Color("white")):
 
         if nbp<2:
-            raise ValueError("Can't use a Grid_Line object with nbp<2!")
+            raise ValueError("Can't use a Grid_Row object with nbp<2!")
 
         # Defining the local dimensions of the grid and saving the corresponding
         # begining column and row in the global grid.
