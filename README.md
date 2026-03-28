@@ -79,15 +79,20 @@ Le script vous demandera d'entrer les valeurs à la main et générera `performa
 
 ## Performances
 
-Les performances ont été mesurées en termes de **temps moyen par itération** (ms) en fonction du nombre de processus de calcul, pour chaque décomposition, sur le pattern `glider` (grille 100×90).
+Les performances ont été mesurées en termes de **temps moyen par itération** (ms) en fonction du nombre de processus de calcul, pour chaque décomposition, sur le pattern `glider` (grille 100×90), sur Windows avec Microsoft MPI.
 
 | Processus de calcul | 1D Colonnes (ms) | 1D Lignes (ms) | 2D Boîtes (ms) |
 |:-------------------:|:----------------:|:--------------:|:--------------:|
-| 1                   |                  |                |                |
-| 2                   |                  |                |                |
-| 4                   |                  |                |                |
+| 1                   | 0.349            | 0.375          | 0.501          |
+| 2                   | 1.020            | 0.936          | 1.084          |
+| 4                   | 15.756           | 13.949         | 13.045         |
 
-*Résultats à compléter après benchmarks.*
+### Analyse
 
-La décomposition 2D est attendue plus efficace à grand nombre de processus car le **périmètre des ghost cells échangées** croît en $O(\sqrt{n})$ contre $O(n)$ pour les décompositions 1D. 
+Les résultats montrent que le temps de calcul **augmente** avec le nombre de processus, ce qui est contre-intuitif mais s'explique par plusieurs facteurs :
 
+**Domination de la latence de communication.** Sur une machine Windows locale, chaque opération `Send/Recv` a une latence fixe élevée (de l'ordre de quelques ms). Avec une grille 100×90 découpée en 4 sous-grilles, chaque sous-grille ne contient qu'environ 25×22 cellules — le calcul prend moins de 0.5 ms — mais les échanges de ghost cells imposent un overhead bien supérieur. On observe que `comm_ms` représente plus de 95% du temps total à 4 processus de calcul.
+
+**Avantage relatif de la décomposition 2D.** Malgré cet effet, la décomposition 2D reste la plus rapide à 4 processus (13.0 ms contre 15.8 ms pour les colonnes). En effet, les sous-grilles 2D sont plus carrées, ce qui minimise le périmètre total des ghost cells échangées. Cet avantage est prédit par la complexité théorique : le volume de communication croît en $O(\sqrt{n})$ pour la décomposition 2D, contre $O(n)$ pour les décompositions 1D.
+
+**Remarque.** Ces résultats sont caractéristiques d'un benchmark sur machine locale avec des processus MPI communiquant via mémoire partagée émulée. Sur un vrai cluster avec interconnexion réseau haute performance (InfiniBand), la latence serait bien plus faible et le speedup serait visible à partir de grilles plus grandes (typiquement plusieurs milliers de cellules par dimension).
