@@ -163,6 +163,7 @@ def compute(cells, decomp):
 
     return next_cells
 
+
 # ─────────────────────────────────────────────
 # Boucle principale
 # ─────────────────────────────────────────────
@@ -180,7 +181,8 @@ for it in range(N):
     # ── échange ghost cells ──────────────────
     t0 = time.time()
 
-    if args.decomp == "column":
+    # CORRECTION : on n'échange que s'il y a plus d'un processus de calcul
+    if args.decomp == "column" and nbp_calc > 1:
         buf_b = np.empty(cells.shape[0], dtype=np.uint8)
         buf_a = np.empty(cells.shape[0], dtype=np.uint8)
         sc = np.ascontiguousarray(cells[:,1])
@@ -193,7 +195,7 @@ for it in range(N):
             com_calc.Recv(buf_b, source=before); com_calc.Send(ec, dest=after)
         cells[:,0] = buf_b; cells[:,-1] = buf_a
 
-    elif args.decomp == "row":
+    elif args.decomp == "row" and nbp_calc > 1:
         sr = np.ascontiguousarray(cells[1,:])
         er = np.ascontiguousarray(cells[-2,:])
         if rank_calc % 2 == 0:
@@ -203,7 +205,7 @@ for it in range(N):
             com_calc.Recv(cells[-1,:], source=after);  com_calc.Send(sr, dest=before)
             com_calc.Recv(cells[0,:],  source=before); com_calc.Send(er, dest=after)
 
-    elif args.decomp == "2d":
+    elif args.decomp == "2d" and nbp_calc > 1:
         b_up=np.empty(nx_loc,dtype=np.uint8); b_dn=np.empty(nx_loc,dtype=np.uint8)
         b_lf=np.empty(ny_loc,dtype=np.uint8); b_rt=np.empty(ny_loc,dtype=np.uint8)
         b_ul=np.empty(1,dtype=np.uint8); b_ur=np.empty(1,dtype=np.uint8)
