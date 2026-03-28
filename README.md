@@ -1,5 +1,3 @@
-<<<<<<< Updated upstream
-=======
 # Projet Calcul parallèle : le jeu de la vie
 
 ## Introduction
@@ -91,5 +89,5 @@ Les performances ont été mesurées en termes de **temps moyen par itération**
 
 *Résultats à compléter après benchmarks.*
 
-La décomposition 2D est attendue plus efficace à grand nombre de processus car le **périmètre des ghost cells échangées** croît en $O(\sqrt{n})$ contre $O(n)$ pour les décompositions 1D.
->>>>>>> Stashed changes
+La décomposition 2D est attendue plus efficace à grand nombre de processus car le **périmètre des ghost cells échangées** croît en $O(\sqrt{n})$ contre $O(n)$ pour les décompositions 1D. 
+
