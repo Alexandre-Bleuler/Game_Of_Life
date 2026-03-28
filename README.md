@@ -95,4 +95,3 @@ Les résultats montrent que le temps de calcul **augmente** avec le nombre de pr
 
 **Avantage relatif de la décomposition 2D.** Malgré cet effet, la décomposition 2D reste la plus rapide à 4 processus (13.0 ms contre 15.8 ms pour les colonnes). En effet, les sous-grilles 2D sont plus carrées, ce qui minimise le périmètre total des ghost cells échangées. Cet avantage est prédit par la complexité théorique : le volume de communication croît en $O(\sqrt{n})$ pour la décomposition 2D, contre $O(n)$ pour les décompositions 1D.
 
-**Remarque.** Ces résultats sont caractéristiques d'un benchmark sur machine locale avec des processus MPI communiquant via mémoire partagée émulée. Sur un vrai cluster avec interconnexion réseau haute performance (InfiniBand), la latence serait bien plus faible et le speedup serait visible à partir de grilles plus grandes (typiquement plusieurs milliers de cellules par dimension).
