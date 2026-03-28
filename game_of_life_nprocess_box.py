@@ -9,7 +9,7 @@ import sys
 from mpi4py import MPI
 import game_of_life_2process as gr
 import game_of_life_nprocess_column as grc
-import game_of_life_nprocess_row as grr
+import game_of_life_nprocess_line as grr
 
 
 ITER_PRINT=500 # Printing performances every ITER_PRINT iterations
@@ -59,7 +59,8 @@ class Grille_Box:
             mask = (indices_i< self.dimensions[0])*(indices_j<self.dimensions[1])
             self.cells[indices_i[mask],indices_j[mask]] = 1 
         else:
-            # Pattern aléatoire pour tester
+            # CORRECTION 1 : self.cells doit être alloué avant d'être écrit
+            self.cells = np.zeros(self.dimensions, dtype=np.uint8)
             self.cells[1:-1, 1:-1] = np.random.randint(2, size=(ny_loc, nx_loc), dtype=np.uint8)
         
         self.col_life = color_life
@@ -71,7 +72,7 @@ class Grille_Box:
         next_cells = np.zeros(self.dimensions, dtype=np.uint8)
         diff_cells = []
 
-        # On ne calcule que sur les cellules internes (pas sur les ghost cells)
+        # On ne calcule que sur les cellules internes pas sur les ghost cells
         for i in range(1, ny-1): 
             i_above = (i+ny-1)%ny # +ny pour le cas particulier i==0
             i_below = (i+ny+1)%ny
@@ -92,7 +93,7 @@ class Grille_Box:
                     next_cells[i,j] = 1         # Naissance de la cellule
                     diff_cells.append((self.y_loc+i-1)*self.nx_global+self.x_loc+j-1)
                 else:
-                    next_cells[i,j] = 0         # Morte, elle reste morte.
+                    next_cells[i,j] = 0         # Morte
         self.cells = next_cells
         return diff_cells
 
@@ -246,7 +247,7 @@ if __name__ == '__main__':
 
         if rank == 0:
            
-        #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
+            #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
 
             t2 = time.time()
             appli.draw()
@@ -394,7 +395,9 @@ if __name__ == '__main__':
                     f"""computed {number_iter} iterations,""",
                     f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
                 sys.stdout.flush()
+
+        # on diffuse mustContinue à tous les processus pour une sortie propre
+        mustContinue = globCom.bcast(mustContinue, root=0)
             
     if rank==0:
         pg.quit()
-        globCom.Abort()
