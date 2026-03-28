@@ -18,7 +18,7 @@ n_proc = [2, 3, 5]   # nombre total de processus (pour les labels)
 decompositions = {
     "1D Colonnes  (game_of_life_nprocess_column.py)": {},
     "1D Lignes    (game_of_life_nprocess_row.py)"   : {},
-    "2D Boîtes    (game_of_life_fixed.py)"          : {},
+    "2D Boîtes    (game_of_life_nprocess_box.py)"          : {},
 }
 
 print("=" * 60)

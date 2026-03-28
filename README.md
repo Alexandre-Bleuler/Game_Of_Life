@@ -19,14 +19,14 @@ Le projet est scindé en 4 fichiers :
 
 - `game_of_life_2process.py` : version de référence à exactement 2 processus. Un processus calcule l'intégralité de la grille, l'autre l'affiche. Pas de découpage de domaine.
 - `game_of_life_nprocess_column.py` : parallélisation 1D par **colonnes**. La grille est découpée en bandes verticales, chaque processus de calcul gère une bande. Les échanges de ghost cells se font uniquement entre voisins gauche/droite.
-- `game_of_life_nprocess_row.py` : parallélisation 1D par **lignes**. La grille est découpée en bandes horizontales. Les échanges de ghost cells se font uniquement entre voisins haut/bas.
+- `game_of_life_nprocess_line.py` : parallélisation 1D par **lignes**. La grille est découpée en bandes horizontales. Les échanges de ghost cells se font uniquement entre voisins haut/bas.
 - `game_of_life_nprocess_box.py` : parallélisation **2D par boîtes**. La grille est découpée en sous-grilles rectangulaires. Chaque processus échange des ghost cells avec ses 8 voisins (haut, bas, gauche, droite et les 4 diagonales).
 
 ## Lancement
 ```bash
 mpiexec -n 2 python game_of_life_2process.py [pattern]          # exactement N=2
 mpiexec -n N python game_of_life_nprocess_column.py [pattern]   # N >= 2
-mpiexec -n N python game_of_life_nprocess_row.py [pattern]      # N >= 2
+mpiexec -n N python game_of_life_nprocess_line.py [pattern]      # N >= 2
 mpiexec -n N python game_of_life_nprocess_box.py [pattern]      # N >= 2
 ```
 

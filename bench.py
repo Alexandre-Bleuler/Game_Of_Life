@@ -134,22 +134,34 @@ else:
 # ─────────────────────────────────────────────
 def compute(cells, decomp):
     ny, nx = cells.shape
-    r0, r1 = (1, ny-1) if decomp in ("column","2d") else (1, ny-1)
-    c0, c1 = (1, nx-1) if decomp in ("row","2d")    else (1, nx-1)
-    if decomp == "column": r0,r1 = 0, ny
-    if decomp == "row":    c0,c1 = 0, nx
-    next_cells = np.zeros_like(cells)
-    for i in range(r0, r1):
-        iu = (i-1) % ny; id_ = (i+1) % ny
-        for j in range(c0, c1):
-            jl = (j-1) % nx; jr = (j+1) % nx
-            v = (cells[iu,jl]+cells[iu,j]+cells[iu,jr]+
-                 cells[i, jl]+            cells[i, jr]+
-                 cells[id_,jl]+cells[id_,j]+cells[id_,jr])
-            if (cells[i,j] and v in (2,3)) or (not cells[i,j] and v==3):
-                next_cells[i,j] = 1
-    return next_cells
 
+    if decomp == "column":
+        r0, r1, c0, c1 = 0, ny, 1, nx-1
+    elif decomp == "row":
+        r0, r1, c0, c1 = 1, ny-1, 0, nx
+    else:  # 2d
+        r0, r1, c0, c1 = 1, ny-1, 1, nx-1
+
+    c = cells[r0:r1, c0:c1]
+
+    voisins = (
+        np.roll(cells, -1, axis=0)[r0:r1, c0:c1] +
+        np.roll(cells,  1, axis=0)[r0:r1, c0:c1] +
+        np.roll(cells, -1, axis=1)[r0:r1, c0:c1] +
+        np.roll(cells,  1, axis=1)[r0:r1, c0:c1] +
+        np.roll(np.roll(cells, -1, axis=0), -1, axis=1)[r0:r1, c0:c1] +
+        np.roll(np.roll(cells, -1, axis=0),  1, axis=1)[r0:r1, c0:c1] +
+        np.roll(np.roll(cells,  1, axis=0), -1, axis=1)[r0:r1, c0:c1] +
+        np.roll(np.roll(cells,  1, axis=0),  1, axis=1)[r0:r1, c0:c1]
+    )
+
+    next_cells = np.zeros_like(cells)
+    next_cells[r0:r1, c0:c1] = (
+        ((c == 1) & ((voisins == 2) | (voisins == 3))) |
+        ((c == 0) & (voisins == 3))
+    ).astype(np.uint8)
+
+    return next_cells
 
 # ─────────────────────────────────────────────
 # Boucle principale
