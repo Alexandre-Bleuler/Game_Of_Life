@@ -59,7 +59,8 @@ class Grille_Box:
             mask = (indices_i< self.dimensions[0])*(indices_j<self.dimensions[1])
             self.cells[indices_i[mask],indices_j[mask]] = 1 
         else:
-            # Pattern aléatoire pour tester
+            # CORRECTION 1 : self.cells doit être alloué avant d'être écrit
+            self.cells = np.zeros(self.dimensions, dtype=np.uint8)
             self.cells[1:-1, 1:-1] = np.random.randint(2, size=(ny_loc, nx_loc), dtype=np.uint8)
         
         self.col_life = color_life
@@ -159,8 +160,8 @@ if __name__ == '__main__':
 
         grid = gr.Grille(*init_pattern)
         appli = gr.App((resx, resy), grid)
-        first_iter=True
         diff=[]
+        
         
 
     else: 
@@ -246,15 +247,7 @@ if __name__ == '__main__':
 
         if rank == 0:
            
-        #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
-
-            if first_iter:
-                first_iter=False
-      
-            else:
-                diff_list=globCom.gather(diff, root=0)
-                for sub_diff in diff_list:
-                    gr.update_grid(grid, sub_diff)
+            #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
 
             t2 = time.time()
             appli.draw()
@@ -262,6 +255,10 @@ if __name__ == '__main__':
             for event in pg.event.get():
                 if event.type == pg.QUIT:
                     mustContinue = False
+
+            diff_list=globCom.gather(diff, root=0)
+            for sub_diff in diff_list:
+                gr.update_grid(grid, sub_diff)
 
         else:
 
@@ -308,14 +305,14 @@ if __name__ == '__main__':
                     com_on_row.Recv(phantom_col_before, source=before_col_process)
 
                     # Vertexes
-                    com_calc.Send(np.array(grid_loc.cells[0,0], dtype=np.uint8), dest=low_left_process)
+                    com_calc.Send(np.array(grid_loc.cells[1,   1],  dtype=np.uint8), dest=low_left_process)
                     com_calc.Recv(up_right_buffer, source=up_right_process)
-                    com_calc.Send(np.array(grid_loc.cells[0,-1], dtype=np.uint8), dest=low_right_process)
+                    com_calc.Send(np.array(grid_loc.cells[1,  -2],  dtype=np.uint8), dest=low_right_process)
                     com_calc.Recv(up_left_buffer, source=up_left_process)
-                    com_calc.Send(np.array(grid_loc.cells[-1,0], dtype=np.uint8), dest=up_left_process)
+                    com_calc.Send(np.array(grid_loc.cells[-2,  1],  dtype=np.uint8), dest=up_left_process)
                     com_calc.Recv(low_right_buffer, source=low_right_process)
-                    com_calc.Send(np.array(grid_loc.cells[-1,-1], dtype=np.uint8), dest=up_right_process)
-                    com_calc.Recv(low_left_buffer, source=low_left_process) 
+                    com_calc.Send(np.array(grid_loc.cells[-2, -2],  dtype=np.uint8), dest=up_right_process)
+                    com_calc.Recv(low_left_buffer, source=low_left_process)
 
                 else:
                     # Columns
@@ -326,14 +323,14 @@ if __name__ == '__main__':
 
                     # Vertexes 
                     com_calc.Recv(up_right_buffer, source=up_right_process)
-                    com_calc.Send(np.array(grid_loc.cells[0,0], dtype=np.uint8), dest=low_left_process)
+                    com_calc.Send(np.array(grid_loc.cells[1,   1],  dtype=np.uint8), dest=low_left_process)
                     com_calc.Recv(up_left_buffer, source=up_left_process)
-                    com_calc.Send(np.array(grid_loc.cells[0,-1], dtype=np.uint8), dest=low_right_process)
+                    com_calc.Send(np.array(grid_loc.cells[1,  -2],  dtype=np.uint8), dest=low_right_process)
                     com_calc.Recv(low_right_buffer, source=low_right_process)
-                    com_calc.Send(np.array(grid_loc.cells[-1,0], dtype=np.uint8), dest=up_left_process)
+                    com_calc.Send(np.array(grid_loc.cells[-2,  1],  dtype=np.uint8), dest=up_left_process)
                     com_calc.Recv(low_left_buffer, source=low_left_process)
-                    com_calc.Send(np.array(grid_loc.cells[-1,-1], dtype=np.uint8), dest=up_right_process)
-
+                    com_calc.Send(np.array(grid_loc.cells[-2, -2],  dtype=np.uint8), dest=up_right_process)
+            
                 grid_loc.cells[1:-1,0]=phantom_col_before
                 grid_loc.cells[1:-1,-1]=phantom_col_next 
                 grid_loc.cells[0,0]=low_left_buffer[0]
@@ -398,7 +395,9 @@ if __name__ == '__main__':
                     f"""computed {number_iter} iterations,""",
                     f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
                 sys.stdout.flush()
+
+        # on diffuse mustContinue à tous les processus pour une sortie propre
+        mustContinue = globCom.bcast(mustContinue, root=0)
             
     if rank==0:
         pg.quit()
-        globCom.Abort()
