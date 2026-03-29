@@ -59,10 +59,7 @@ class Grille_Box:
             mask = (indices_i< self.dimensions[0])*(indices_j<self.dimensions[1])
             self.cells[indices_i[mask],indices_j[mask]] = 1 
         else:
-            # CORRECTION 1 : self.cells doit être alloué avant d'être écrit
-            self.cells = np.zeros(self.dimensions, dtype=np.uint8)
-            self.cells[1:-1, 1:-1] = np.random.randint(2, size=(ny_loc, nx_loc), dtype=np.uint8)
-        
+            self.cells = np.random.randint(2, size=self.dimensions, dtype=np.uint8)
         self.col_life = color_life
         self.col_dead = color_dead
 
@@ -396,8 +393,6 @@ if __name__ == '__main__':
                     f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
                 sys.stdout.flush()
 
-        # on diffuse mustContinue à tous les processus pour une sortie propre
-        mustContinue = globCom.bcast(mustContinue, root=0)
             
     if rank==0:
         pg.quit()
