@@ -1,31 +1,13 @@
 """
 Le jeu de la vie parallélisé selon les lignes de la grille. 
-################
-Le jeu de la vie est un automate cellulaire inventé par Conway se basant normalement sur une grille infinie
-de cellules en deux dimensions. Ces cellules peuvent prendre deux états :
-    - un état vivant
-    - un état mort
-A l'initialisation, certaines cellules sont vivantes, d'autres mortes.
-Le principe du jeu est alors d'itérer de telle sorte qu'à chaque itération, une cellule va devoir interagir avec
-les huit cellules voisines (gauche, droite, bas, haut et les quatre en diagonales.) L'interaction se fait selon les
-règles suivantes pour calculer l'irération suivante :
-    - Une cellule vivante avec moins de deux cellules voisines vivantes meurt ( sous-population )
-    - Une cellule vivante avec deux ou trois cellules voisines vivantes reste vivante
-    - Une cellule vivante avec plus de trois cellules voisines vivantes meurt ( sur-population )
-    - Une cellule morte avec exactement trois cellules voisines vivantes devient vivante ( reproduction )
-
-Pour ce projet, on change légèrement les règles en transformant la grille infinie en un tore contenant un
-nombre fini de cellules. Les cellules les plus à gauche ont pour voisines les cellules les plus à droite
-et inversement, et de même les cellules les plus en haut ont pour voisines les cellules les plus en bas
-et inversement.
-
-On itère ensuite pour étudier la façon dont évolue la population des cellules sur la grille.
 """
 import pygame  as pg
 import numpy   as np
 import game_of_life_2process as gr
 
-class Grille_Line:
+ITER_PRINT=500 # Printing performances every ITER_PRINT iterations
+
+class Grille_Row:
     """
     Grille torique décrivant l'automate cellulaire.
     En entrée lors de la création de la grille :
@@ -44,16 +26,21 @@ class Grille_Line:
     def __init__(self, rank, nbp, dim, init_pattern=None, color_life=pg.Color("black"), color_dead=pg.Color("white")):
 
         if nbp<2:
-            raise ValueError("Can't use a Grid_Line object with nbp<2!")
+            raise ValueError("Can't use a Grid_Row object with nbp<2!")
 
-        row_dim=dim[0]
-        reste = row_dim%nbp
-        ny_loc = row_dim//nbp + (1 if rank<reste else 0) 
+        # Defining the local dimensions of the grid and saving the corresponding
+        # begining column and row in the global grid.
+
+        y_dim=dim[0]
+        reste = y_dim%nbp
+        ny_loc = y_dim//nbp + (1 if rank<reste else 0) 
         y_loc = ny_loc*rank + (reste if rank>=reste else 0)
 
         self.ny_loc = ny_loc
         self.y_loc = y_loc
         self.dimensions = (ny_loc+2,dim[1])
+
+        # Initializing the grid
 
         if init_pattern is not None:
             self.cells = np.zeros(self.dimensions, dtype=np.uint8)
@@ -92,26 +79,16 @@ class Grille_Line:
                 if self.cells[i,j] == 1: # Si la cellule est vivante
                     if (nb_voisines_vivantes < 2) or (nb_voisines_vivantes > 3):
                         next_cells[i,j] = 0 # Cas de sous ou sur population, la cellule meurt
-                        diff_cells.append((i-1)*nx+j)
+                        diff_cells.append((self.y_loc+i-1)*nx+j)
                     else:
                         next_cells[i,j] = 1 # Sinon elle reste vivante
                 elif nb_voisines_vivantes == 3: # Cas où cellule morte mais entourée exactement de trois vivantes
                     next_cells[i,j] = 1         # Naissance de la cellule
-                    diff_cells.append((i-1)*nx+j) 
+                    diff_cells.append((self.y_loc+i-1)*nx+j) 
                 else:
                     next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
         return diff_cells
-
-
-def update_grid_line(grid, diff, nbp_calc=1, y_loc=None):
-    for number in diff: 
-        i=number//grid.dimensions[1]
-        j=number%grid.dimensions[1]
-        if nbp_calc >1:
-            grid.cells[y_loc+i,j] =1-grid.cells[y_loc+i,j]
-        elif nbp_calc==1:
-            grid.cells[i,j] =1-grid.cells[i,j]
 
 if __name__ == '__main__':
     import time
@@ -127,7 +104,9 @@ if __name__ == '__main__':
     if nbp < 2: 
         raise ValueError("Need at least 2 processes to parallelize the Game of Life!")
 
-    pg.init()
+    if rank==0:
+        pg.init()
+
     dico_patterns = { # Dimension et pattern dans un tuple
         'blinker' : ((5,5),[(2,1),(2,2),(2,3)]),
         'toad'    : ((6,6),[(2,2),(2,3),(2,4),(3,3),(3,4),(3,5)]),
@@ -152,8 +131,10 @@ if __name__ == '__main__':
     if len(sys.argv) > 3 :
         resx = int(sys.argv[2])
         resy = int(sys.argv[3])
-    print(f"Pattern initial choisi : {choice}")
-    print(f"resolution ecran : {resx,resy}")
+    if rank==0:
+        print(f"Pattern initial choisi : {choice}")
+        print(f"resolution ecran : {resx,resy}")
+        sys.stdout.flush()
     try:
         init_pattern = dico_patterns[choice]
     except KeyError:
@@ -174,6 +155,7 @@ if __name__ == '__main__':
         grid = gr.Grille(*init_pattern)
         appli = gr.App((resx, resy), grid)
         first_iter=True
+        diff=[]
 
     else: 
 
@@ -190,48 +172,44 @@ if __name__ == '__main__':
         if nbp_calc>1:
             before_process=(rank_calc-1)%nbp_calc
             next_process=(rank_calc+1)%nbp_calc
-            grid_loc = Grille_Line(rank_calc, nbp_calc, *init_pattern)
+            grid_loc = Grille_Row(rank_calc, nbp_calc, *init_pattern)
         else:
             grid_loc = gr.Grille(*init_pattern)
+  
+        # Making time measurements
 
-        # Checking the first iteration
+        total_compute_time=0
+        number_iter=0
 
 
     mustContinue = True
 
     while mustContinue:
+
         #time.sleep(0.5) # A régler ou commenter pour vitesse maxi
 
         if rank==0:
 
             if first_iter:
                 first_iter=False
-                continue
 
-            recv_counter=0
-            while recv_counter<nbp-1:
-                if nbp>2:
-                    [y_loc, diff]=globCom.recv(source=MPI.ANY_SOURCE)
-                    update_grid_line(grid, diff, nbp-1, y_loc)
-                else:
-                    diff=globCom.recv(source=1)
-                    update_grid_line(grid, diff)
-                recv_counter+=1
+            else:
+                diff_list=globCom.gather(diff, root=0)
+                for sub_diff in diff_list:
+                    gr.update_grid(grid, sub_diff)
 
             t2 = time.time()
             appli.draw()
             t3 = time.time()
             for event in pg.event.get():
                 if event.type == pg.QUIT:
-                    globCom.Abort()
-            #print(f"Temps affichage : {t3-t2:2.2e} secondes", end='\r')
-
-
-        else :
+                    mustContinue = False
+            
+        else:
 
             # Getting value for ghost lines 
+            # WARNING: the order of the Send and Recv is crucial in order to avoid blocking the program.
 
-            # WARNING: the order of the Send and Recv is crucial in order to avoid program blocking
             t1 = time.time()
 
             if nbp_calc>1 and rank_calc%2==0:
@@ -249,15 +227,22 @@ if __name__ == '__main__':
         
             diff = grid_loc.compute_next_iteration() 
         
+            t2=time.time()
+
             # Sending the results 
 
-            if nbp_calc>1:
-                globCom.send([grid_loc.y_loc]+[diff], dest=0)
-            else:
-                globCom.send(diff, dest=0)
-            t2 = time.time()
-            print(f"Temps calcul prochaine generation pour le rank {rank} : {t2-t1:2.2e} secondes",end="\r")
+            globCom.gather(diff, root=0)     
+
+            # Performance measurements 
+
+            total_compute_time+=t2-t1
+            number_iter+=1
+            if(number_iter%ITER_PRINT==0):
+                mean_iter_time=total_compute_time/number_iter
+                print(f"""Computing process of rank {rank_calc} computed {number_iter} iterations,""",
+                    f"""for an average computing time of {mean_iter_time} seconds.""", sep=" ")
+                sys.stdout.flush()
 
     if rank==0:
         pg.quit()
-
+        globCom.Abort()

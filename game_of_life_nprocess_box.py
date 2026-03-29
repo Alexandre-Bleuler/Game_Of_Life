@@ -9,7 +9,7 @@ import sys
 from mpi4py import MPI
 import game_of_life_2process as gr
 import game_of_life_nprocess_column as grc
-import game_of_life_nprocess_line as grr
+import game_of_life_nprocess_row as grr
 
 
 ITER_PRINT=500 # Printing performances every ITER_PRINT iterations
@@ -72,7 +72,7 @@ class Grille_Box:
         next_cells = np.zeros(self.dimensions, dtype=np.uint8)
         diff_cells = []
 
-        # On ne calcule que sur les cellules internes pas sur les ghost cells
+        # On ne calcule que sur les cellules internes (pas sur les ghost cells)
         for i in range(1, ny-1): 
             i_above = (i+ny-1)%ny # +ny pour le cas particulier i==0
             i_below = (i+ny+1)%ny
@@ -93,7 +93,7 @@ class Grille_Box:
                     next_cells[i,j] = 1         # Naissance de la cellule
                     diff_cells.append((self.y_loc+i-1)*self.nx_global+self.x_loc+j-1)
                 else:
-                    next_cells[i,j] = 0         # Morte
+                    next_cells[i,j] = 0         # Morte, elle reste morte.
         self.cells = next_cells
         return diff_cells
 
