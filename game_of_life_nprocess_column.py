@@ -51,8 +51,6 @@ class Grille_Column:
             self.cells[indices_i[mask],indices_j[mask]] = 1
         else:
             self.cells = np.random.randint(2, size=self.dimensions, dtype=np.uint8)
-            self.col_life = color_life
-            self.col_dead = color_dead
         self.col_life = color_life
         self.col_dead = color_dead
 
@@ -190,20 +188,16 @@ if __name__ == '__main__':
 
         if rank==0:
 
-            if first_iter:
-                first_iter=False
-
-            else:
-                diff_list=globCom.gather(diff, root=0)
-                for sub_diff in diff_list:
-                    gr.update_grid(grid, sub_diff)
-
             t2 = time.time()
             appli.draw()
             t3 = time.time()
             for event in pg.event.get():
                 if event.type == pg.QUIT:
-                    globCom.Abort()
+                    mustContinue = False
+
+            diff_list=globCom.gather(diff, root=0)
+            for sub_diff in diff_list:
+                gr.update_grid(grid, sub_diff)
 
         else :
 

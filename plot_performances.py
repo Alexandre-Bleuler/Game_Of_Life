@@ -10,79 +10,24 @@ Lancer avec : python plot_performances.py
 import matplotlib.pyplot as plt
 import numpy as np
 
-# ---- Nombre de processus de CALCUL testés (sans compter rank 0) ----
-n_calc = [1, 2, 4]   # correspond à -n 2, -n 3, -n 5
-n_proc = [2, 3, 5]   # nombre total de processus (pour les labels)
+# Création des arrays de données 
 
-# ---- Noms des 3 décompositions ----
-decompositions = {
-    "1D Colonnes  (game_of_life_nprocess_column.py)": {},
-    "1D Lignes    (game_of_life_nprocess_row.py)"   : {},
-    "2D Boîtes    (game_of_life_nprocess_box.py)"          : {},
-}
+nb_process=np.array([2,3,4,5,6,7])
+row_time=np.array([0.0678,0.0352,0.0250,0.0211,0.0186,0.0198])
+column_time=np.array([0.0680,0.0349,0.0247,0.0196,0.0179,0.0209])
+box_time=np.array([0.0672,0.0392,0.0299,0.0196,0.0189,0.0189])
 
-print("=" * 60)
-print("SAISIE DES TEMPS MOYENS PAR ITÉRATION")
-print("=" * 60)
-print("Unité attendue : millisecondes (ms)")
-print("(La valeur est affichée dans le terminal à chaque run)")
-print()
+# Affichage 
 
-results = {}
+plt.plot(nb_process, row_time, color="r")
+plt.plot(nb_process, column_time, color="g")
+plt.plot(nb_process, box_time, color="b")
 
-for nom in decompositions:
-    print(f"--- {nom} ---")
-    temps = []
-    for nc, np_ in zip(n_calc, n_proc):
-        while True:
-            try:
-                val = float(input(f"  mpiexec -n {np_} ... ({nc} processus de calcul) → temps moy (ms) : "))
-                temps.append(val)
-                break
-            except ValueError:
-                print("  Entrée invalide, entre un nombre.")
-    results[nom] = temps
-    print()
-
-# ---- Tracé ----
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-colors  = ["royalblue", "tomato", "seagreen"]
-markers = ["o", "s", "^"]
-
-# Graphe 1 : temps moyen par itération
-ax1 = axes[0]
-for (nom, temps), color, marker in zip(results.items(), colors, markers):
-    label = nom.split("(")[0].strip()
-    ax1.plot(n_calc, temps, marker=marker, color=color, linewidth=2,
-             markersize=8, label=label)
-ax1.set_xlabel("Nombre de processus de calcul")
-ax1.set_ylabel("Temps moyen par itération (ms)")
-ax1.set_title("Temps de calcul")
-ax1.set_xticks(n_calc)
-ax1.set_xticklabels([f"{nc}\n(-n {np_})" for nc, np_ in zip(n_calc, n_proc)])
-ax1.legend()
-ax1.grid(True, alpha=0.3)
-
-# Graphe 2 : speedup relatif au 1 processus de calcul
-ax2 = axes[1]
-for (nom, temps), color, marker in zip(results.items(), colors, markers):
-    label = nom.split("(")[0].strip()
-    speedup = [temps[0] / t for t in temps]
-    ax2.plot(n_calc, speedup, marker=marker, color=color, linewidth=2,
-             markersize=8, label=label)
-
-# Courbe speedup idéal
-ax2.plot(n_calc, n_calc, "k--", linewidth=1, label="Speedup idéal")
-ax2.set_xlabel("Nombre de processus de calcul")
-ax2.set_ylabel("Speedup (t1 / tn)")
-ax2.set_title("Speedup")
-ax2.set_xticks(n_calc)
-ax2.set_xticklabels([f"{nc}\n(-n {np_})" for nc, np_ in zip(n_calc, n_proc)])
-ax2.legend()
-ax2.grid(True, alpha=0.3)
-
-plt.suptitle("Comparaison des décompositions - Jeu de la Vie MPI", fontsize=13)
-plt.tight_layout()
-plt.savefig("performances_comparaison.png", dpi=150)
-print("✓ Graphe sauvegardé : performances_comparaison.png")
+plt.legend(["row", "column","box"])
+plt.xlabel("Nombre total de processus")
+plt.ylabel("Temps d'itération moyen sur 500 itérations")
 plt.show()
+
+
+
+
